@@ -29,8 +29,8 @@ extern unsigned int test_256_bin_len;
 extern unsigned char test_256_bin[];
 
 #define IRX_LOAD(mod)                                                           \
-    if (SifExecModuleBuffer(mod##_irx, size_##mod##_irx, 0, NULL, NULL) < 0)    \
-    printf("Could not load ##mod##\n")
+    ID = SifExecModuleBuffer(mod##_irx, size_##mod##_irx, 0, NULL, &RET);       \
+    if (ID < 0 || RET == 1) printf("Could not load ##mod## (%d|%d)\n", ID, RET)
 
 #define xprintf(f_, ...)         \
     printf((f_), ##__VA_ARGS__); \
@@ -163,6 +163,7 @@ static void probe_port()
 
 int main()
 {
+    int ID, RET;
     struct ip4_addr IP, NM, GW, DNS;
 	int EthernetLinkMode;
 
@@ -174,7 +175,7 @@ int main()
     SifLoadFileInit();
     sbv_patch_enable_lmb(); // The old IOP kernel has no support for LoadModuleBuffer. Apply the patch to enable it.
     sbv_patch_disable_prefix_check(); /* disable the MODLOAD module black/white list, allowing executables to be freely loaded from any device. */
-    sbv_patch_fileio();     // Prevent fileio calling mkdir after remove
+    sbv_patch_fileio();     // Prevent fileio calling mkdir after remove and fix readdir
 
     init_scr();
 
