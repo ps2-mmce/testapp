@@ -8,8 +8,11 @@
 #include <loadfile.h>
 #include <libpad.h>
 #include <debug.h>
+
+#ifdef TTY_UDP
 #include <ps2ip.h>
 #include <netman.h>
+#endif
 
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
@@ -37,17 +40,24 @@ extern unsigned char test_256_bin[];
     scr_printf("    ");          \
     scr_printf((f_), ##__VA_ARGS__);
 
+IRX_DEFINE(ioptrap); //exception handler for IRX modules
 IRX_DEFINE(mcman);
 IRX_DEFINE(mmceman);
 IRX_DEFINE(sio2man);
 IRX_DEFINE(padman);
 
 //For network printf
+#ifdef TTY_UDP
 IRX_DEFINE(ps2dev9);
 IRX_DEFINE(netman);
 IRX_DEFINE(smap);
 IRX_DEFINE(ps2ip_nm);
 IRX_DEFINE(udptty);
+#endif
+
+#ifdef TTY_PPC
+IRX_DEFINE(ppctty);
+#endif
 
 void print_main_menu()
 {
@@ -127,6 +137,7 @@ static bool countdown()
     return false;
 }
 
+#ifdef TTY_UDP
 static int eth_wait(int seconds)
 {
     for (int timeout = 0; timeout < seconds; timeout++) {
@@ -137,6 +148,7 @@ static int eth_wait(int seconds)
     }
     return -1;
 }
+#endif
 
 //TODO: temp
 static void probe_port()
@@ -179,20 +191,18 @@ int main()
 
     init_scr();
 
+#ifdef TTY_UDP
     IRX_LOAD(ps2dev9);
     IRX_LOAD(netman);
     IRX_LOAD(smap);
     IRX_LOAD(ps2ip_nm);
-
     //Example taken from PS2SDK
     //Initialize IP address.
 	IP4_ADDR(&IP, 192, 168, 2, 10);
 	IP4_ADDR(&NM, 255, 255, 255, 0);
 	IP4_ADDR(&GW, 192, 168, 2, 1);
-
 	//Initialize the TCP/IP protocol stack.
 	ps2ipInit(&IP, &NM, &GW);
-
     //Wait for the link to become ready.
 	xprintf("Waiting for connection...\n");
 	//Wait 5 seconds
@@ -201,7 +211,13 @@ int main()
 	}
 
     IRX_LOAD(udptty);
+#endif
 
+#ifdef TTY_PPC
+    IRX_LOAD(ppctty);
+#endif
+    xprintf("Loading ioptrap\n");
+    IRX_LOAD(ioptrap);
     xprintf("Loading sio2man\n");
     IRX_LOAD(sio2man);
     delay(1);

@@ -1,7 +1,7 @@
 
 EE_BIN = mmceman_testapp.elf
-
-EE_LIBS = -lps2ip  -lnetman -ldebug -lpatches -lpad -lkernel
+TTY ?= UDP
+EE_LIBS = -ldebug -lpatches -lpad -lkernel
 
 EE_OBJS = src/common.o src/pad.o src/mmce_cmd_tests.o src/mmce_fs_tests.o src/pattern_256.o src/main.o
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -12,11 +12,16 @@ EE_IRX_FILES =\
 	sio2man.irx\
 	mmceman.irx\
 	padman.irx \
-	udptty.irx \
-	netman.irx \
-	smap.irx \
-	ps2dev9.irx \
-	ps2ip_nm.irx
+	ioptrap.irx
+
+ifeq ($(TTY),UDP)
+  EE_LIBS += -lps2ip -lnetman
+  EE_IRX_FILES += udptty.irx netman.irx smap.irx ps2dev9.irx ps2ip_nm.irx
+  EE_CFLAGS += -DTTY_UDP
+else ifeq ($(TTY),PPC)
+  EE_IRX_FILES += ppctty.irx
+  EE_CFLAGS += -DTTY_PPC
+endif
 
 EE_IRX_OBJS = $(addsuffix _irx.o, $(basename $(EE_IRX_FILES)))
 EE_OBJS += $(EE_IRX_OBJS)
