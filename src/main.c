@@ -7,6 +7,8 @@
 #include <stdio.h>
 #include <loadfile.h>
 #include <libpad.h>
+#include <libmc.h>
+#include <iopcontrol_special.h>
 #include <debug.h>
 
 #ifdef TTY_UDP
@@ -41,6 +43,7 @@ extern unsigned char test_256_bin[];
     scr_printf((f_), ##__VA_ARGS__);
 
 IRX_DEFINE(ioptrap); //exception handler for IRX modules
+IRX_DEFINE(mcserv);
 IRX_DEFINE(mcman);
 IRX_DEFINE(mmceman);
 IRX_DEFINE(sio2man);
@@ -180,7 +183,8 @@ int main()
 	int EthernetLinkMode;
 
     SifInitRpc(0);
-    while (!SifIopReset("", 0)) {};
+    //while (!SifIopReset("", 0)) {};
+    SifIopRebootBuffer(IOPRP, size_IOPRP);//Reboot the IOP with an IOPRP to replace the SECRMAN driver.
     while (!SifIopSync()) {};
 
     SifInitIopHeap(); // Initialize SIF services for loading modules and files.
@@ -216,6 +220,7 @@ int main()
 #ifdef TTY_PPC
     IRX_LOAD(ppctty);
 #endif
+
     xprintf("Loading ioptrap\n");
     IRX_LOAD(ioptrap);
     xprintf("Loading sio2man\n");
@@ -229,41 +234,11 @@ int main()
     xprintf("Loading mcman\n");
     IRX_LOAD(mcman);
 
-    xprintf("Loading padman\n");
-    IRX_LOAD(padman);
+    xprintf("Loading mcserv\n");
+    IRX_LOAD(mcserv);
 
-    //Temp, attempt to determine port MMCE is connected to
-    probe_port();
-    
-    // Perform a short automatic sequence
-    // if we fail to init the pads or
-    // interrupt the countdown timer
-    
-    bool padInited = init_pad();
+    //TO-DO. add code for init libmc and do something to access filesystem of mc0 and mc1
 
-    if (!padInited)
-    {
-        xprintf("Pad init failed...\n");
-        mmce_fs_auto_tests();
-        mmce_cmd_auto_tests();
-        return 0;
-    }
-
-    bool interrupted = countdown();
-
-    if (!interrupted)
-    {
-        xprintf("No button press, running auto test...\n");
-        mmce_fs_auto_tests();
-        mmce_cmd_auto_tests();
-        return 0;
-    }
-
-    // in case you've been mashing the keys a bit
-    update_pad();
-    delay(1);
-
-    menu_main_loop();
-
+    sleep(120);
     return 0;
 }

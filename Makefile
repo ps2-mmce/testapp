@@ -1,13 +1,15 @@
 
 EE_BIN = mmceman_testapp.elf
+EE_SRC_DIR ?= src/
 TTY ?= UDP
-EE_LIBS = -ldebug -lpatches -lpad -lkernel
+EE_LIBS = -ldebug -lpatches -lpad -lkernel -liopreboot -lmc
 
-EE_OBJS = src/common.o src/pad.o src/mmce_cmd_tests.o src/mmce_fs_tests.o src/pattern_256.o src/main.o
+EE_OBJS = $(addsuffix $(EE_SRC_DIR), common.o pad.o mmce_cmd_tests.o mmce_fs_tests.o pattern_256.o main.o ioprp.o)
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 
 # Add embedded IRX files
 EE_IRX_FILES =\
+	mcserv.irx \
 	mcman.irx \
 	sio2man.irx\
 	mmceman.irx\
@@ -34,6 +36,9 @@ vpath %.irx $(ROOT_DIR)/../mmceman/irx/
 %_irx.o: %.irx
 	bin2c $< $*_irx.c $*_irx
 	mips64r5900el-ps2-elf-gcc -c $*_irx.c -o $*_irx.o
+
+$(EE_SRC_DIR)ioprp.c: iop/IOPRP.IMG
+	bin2c $< $@ ioprp
 
 all: $(EE_BIN)
 
