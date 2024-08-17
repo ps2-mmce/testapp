@@ -1,6 +1,7 @@
 #include <tamtypes.h>
 #include <stdbool.h>
 #include <libpad.h>
+#include <stdint.h>
 
 
 #include "include/common.h"
@@ -18,6 +19,7 @@ static uint32_t lastPadMask = 0x0000;
 /// @returns successful read
 bool update_pad()
 {
+
     int port = 0;
     int slot = 0;
 
@@ -50,6 +52,7 @@ bool all_released()
 
 bool init_pad()
 {
+
     // First pad only
     int port = 0;
     int slot = 0;

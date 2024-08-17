@@ -1,6 +1,10 @@
 #ifndef MMCE_CMD_TESTS_H
 #define MMCE_CMD_TESTS_H
 
+#include "include/menu.h"
+
+extern menu_t mmce_cmd_menu;
+
 enum mmceman_cmds {
     MMCEMAN_CMD_PING = 0x1,
     MMCEMAN_CMD_GET_STATUS,

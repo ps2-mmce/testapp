@@ -3,16 +3,24 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <sys/time.h>
+#include <dirent.h>
+#include <unistd.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <ps2sdkapi.h>
 
 #define NEWLIB_PORT_AWARE
 #include <fileio.h>
+#include <fileXio_rpc.h>
 #include <io_common.h>
 
 #include "include/pad.h"
 #include "include/common.h"
 #include "include/mmce_fs_tests.h"
 
-static int random_count;
+static int read_size = 256;
+static int write_size = 256;
 
 static int test_fs_verify_data(uint8_t *buffer, uint32_t size, uint32_t offset)
 {
@@ -63,12 +71,33 @@ static int test_fs_verify_data(uint8_t *buffer, uint32_t size, uint32_t offset)
     return res;
 }
 
+static void pow_two_size_inc(void *arg)
+{
+    int size = *(int*)arg;
+    size = size * 2;
+    if (size > 262144)
+        size = 262144;
+
+    *(int*)arg = size;
+}
+
+static void pow_two_size_dec(void *arg)
+{
+    int size = *(int*)arg;
+    size = size / 2;
+    if (size <= 0)
+        size = 1;
+
+    *(int*)arg = size;
+}
+
 /* Open 256.bin w/ O_RDONLY
  * Close 256.bin
 */
-static void test_fs_open_close(void)
+static void test_fs_open_close()
 {
     int fd;
+    int iop_fd;
     int res;
 
     xprintf("Testing: 0x40 - Open\n");
@@ -76,7 +105,8 @@ static void test_fs_open_close(void)
 
     fd = open("mmce:/256.bin", O_RDONLY);
     if (fd != -1) {
-        xprintf("[PASS] fd: %i\n", fd);
+        iop_fd = ps2sdk_get_iop_fd(fd);
+        xprintf("[PASS] fd: %i\n", iop_fd);
     } else {
         xprintf("[FAIL] error: %i\n", fd);
         return;
@@ -87,7 +117,7 @@ static void test_fs_open_close(void)
 
     res = close(fd);
     if (res != -1) {
-        xprintf("[PASS] closed: %i\n", fd);
+        xprintf("[PASS] closed: %i\n", iop_fd);
     } else {
         xprintf("[FAIL] error: %i\n", fd);
         return;
@@ -97,18 +127,18 @@ static void test_fs_open_close(void)
 }
 
 /* Open 256.bin w/ O_RDONLY
- * Read 256KB
+ * Read read_write_size
  * Verify data against pattern_256
  * Close
 */
-static void test_fs_read(uint32_t read_size)
+static void test_fs_read(void *arg)
 {
     int fd;
     int res;
-    int msec;
     uint8_t *buffer = NULL;
+    struct timeval tv_start, tv_end;
 
-    clock_t clk_start, clk_end;
+    int size = *(int*)arg;
 
     fd = open("mmce:/256.bin", O_RDONLY);
     if (fd < 0) {
@@ -116,30 +146,33 @@ static void test_fs_read(uint32_t read_size)
         return;
     }
     
-    buffer = malloc(read_size);
+    buffer = malloc(size);
     if (buffer == NULL) {
-        xprintf("Failed malloc 0x%x bytes\n", read_size);
+        xprintf("Failed malloc 0x%x bytes\n", size);
         close(fd);
         return;
     }
 
-    xprintf("Testing: 0x42 - Read\n");
+    xprintf("Testing: 0x42 - Read %i bytes\n", size);
     delay(2);
 
-    clk_start = clock();
-    res = read(fd, buffer, read_size);
-    clk_end = clock();
-    
-    msec = (int)((clk_end - clk_start) * 1000 / CLOCKS_PER_SEC);
+    gettimeofday(&tv_start, 0);
+    res = read(fd, buffer, size);
+    gettimeofday(&tv_end, 0);
+
+    long elapsed = (tv_end.tv_sec - tv_start.tv_sec) * 1000000 + tv_end.tv_usec - tv_start.tv_usec; 
+    float msec = (float)elapsed / 1000.0f;
+
     xprintf("\n");
-    xprintf("Read %dKB (%d bytes) in %dms, speed = %dKB/s\n", read_size/1024, read_size, msec, read_size/msec);
+    xprintf("Read %dKB (%d bytes) in %.2fms, speed = %.2fKB/s\n", size/1024, size, msec, (float)size/msec);
     xprintf("Verifying data...\n");
 
-    if (res != read_size) {
-        xprintf("[Warn] expected %i, got %i\n", read_size, res);
+    if (res != size) {
+        xprintf("[Warn] expected %i, got %i\n", size, res);
     }
 
-    res = test_fs_verify_data(buffer, read_size, 0);
+    delay(1);
+    res = test_fs_verify_data(buffer, size, 0);
     if (res != -1) {
         xprintf("[PASS] Data valid\n");
     } else {
@@ -156,14 +189,127 @@ static void test_fs_read(uint32_t read_size)
     xprintf("\n");
 }
 
+/* Open 256.bin w/ O_RDONLY
+ * Attempt to read 512 bytes beyond length of file
+ * Close
+*/
+static void test_fs_read_beyond()
+{
+    int fd;
+    int res;
+    uint8_t *buffer = NULL;
+    struct timeval tv_start, tv_end;
+
+    uint8_t size = 512;
+
+    fd = open("mmce:/256.bin", O_RDONLY);
+    if (fd < 0) {
+        xprintf("Failed to open 256.bin, %i\n", fd);
+        return;
+    }
+    
+    buffer = malloc(size);
+    if (buffer == NULL) {
+        xprintf("Failed malloc 0x%x bytes\n", size);
+        close(fd);
+        return;
+    }
+
+    xprintf("Testing: 0x42 - Read (512 bytes over file size)\n");
+    delay(2);
+
+    gettimeofday(&tv_start, 0);
+    res = read(fd, buffer, size);
+    gettimeofday(&tv_end, 0);
+
+    long elapsed = (tv_end.tv_sec - tv_start.tv_sec) * 1000000 + tv_end.tv_usec - tv_start.tv_usec; 
+    float msec = (float)elapsed / 1000.0f;
+
+    xprintf("\n");
+    xprintf("Read %dKB (%d bytes) in %.2fms, speed = %.2fKB/s\n", size/1024, size, msec, (float)size/msec);
+    xprintf("Verifying data...\n");
+
+    if (res != size) {
+        xprintf("[Warn] expected %i, got %i\n", size, res);
+    }
+
+    res = close(fd);
+    if (res == -1) {
+        xprintf("Failed to close\n");
+    }
+
+    free(buffer);
+
+    xprintf("\n");
+}
+
+void test_fs_read_sweep()
+{
+    int size = 256;
+
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 512;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 1024;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 2048;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 4096;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 8192;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 16384;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 32768;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 65536;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 131072;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+
+    size = 262144;
+    test_fs_read(&size);
+    delay(2);
+    scr_clear();
+}
+
 /* Open test_file.bin w/ O_CREAT O_RDWR
- * Write 128KB from pattern_256
+ * Write read_write_size from pattern_256
  * Close and reopen
- * Read back 128KB
+ * Read back read_write_size
  * Verify data against pattern_256
  * Close
 */
-static void test_fs_write(uint32_t write_size)
+static void test_fs_write(void *arg)
 {
     int fd;
     int res;
@@ -172,34 +318,36 @@ static void test_fs_write(uint32_t write_size)
 
     clock_t clk_start, clk_end;
 
+    int size = *(int*)arg;
+
     fd = open("mmce:/test_file.bin", O_CREAT | O_RDWR);
     if (fd < 0) {
         xprintf("Failed to open test_file.bin, %i\n", fd);
         return;
     }
     
-    buffer = malloc(write_size);
+    buffer = malloc(size);
     if (buffer == NULL) {
-        xprintf("Failed malloc 0x%x bytes\n", write_size);
+        xprintf("Failed malloc 0x%x bytes\n", size);
         close(fd);
         return;
     }
 
-    xprintf("Testing: 0x43 - Write\n");
+    xprintf("Testing: 0x43 - Write %i bytes\n", size);
     delay(2);
 
     clk_start = clock();
-    res = write(fd, pattern_256_bin, write_size);
+    res = write(fd, pattern_256_bin, size);
     clk_end = clock();
     
     msec = (int)((clk_end - clk_start) * 1000 / CLOCKS_PER_SEC);
     
-    if (res != write_size) {
-        xprintf("[WARN] expected %i, got %i\n", write_size, res);
+    if (res != size) {
+        xprintf("[WARN] expected %i, got %i\n", size, res);
     }
         
     xprintf("\n");
-    xprintf("Wrote %dKB (%d bytes) in %dms, speed = %dKB/s\n", write_size/1024, write_size, msec, write_size/msec);
+    xprintf("Wrote %dKB (%d bytes) in %dms, speed = %dKB/s\n", size/1024, size, msec, size/msec);
     xprintf("Verifying data...\n");
 
     //Close and reopen
@@ -214,12 +362,12 @@ static void test_fs_write(uint32_t write_size)
         return;
     }
 
-    res = read(fd, buffer, write_size);
-    if (res != write_size) {
-        xprintf("[WARN] expected %i, got %i\n", write_size, res);
+    res = read(fd, buffer, size);
+    if (res != size) {
+        xprintf("[WARN] expected %i, got %i\n", size, res);
     }
 
-    res = test_fs_verify_data(buffer, write_size, 0);
+    res = test_fs_verify_data(buffer, size, 0);
     if (res != -1) {
         xprintf("[PASS] Data valid\n");
     } else {
@@ -239,18 +387,18 @@ static void test_fs_write(uint32_t write_size)
 
 /* Open 256.bin
  * SEEK_SET 0x2000
- * Read 1KB
+ * Read 4KB
  * Verify data against pattern_256[0x2000]
  * SEEK_CUR 0x100
- * Read 1KB
+ * Read 4KB
  * Verify data against pattern_256[0x2100]
  * SEEK_END 0x0
  * Close
 */
-static void test_fs_lseek(void)
+static void test_fs_lseek()
 {
     int fd;
-    int res;
+    u32 res;
     int read_size = 0x1000;
     uint8_t *buffer = NULL;
 
@@ -272,7 +420,7 @@ static void test_fs_lseek(void)
 
     res = lseek(fd, 0x2000, SEEK_SET);
     if (res != 0x2000) {
-        xprintf("[WARN] expected pos %i, got %i\n", 0x2000, res);
+        xprintf("[WARN] expected pos %i, got %li\n", 0x2000, res);
     }
 
     read(fd, buffer, read_size);
@@ -292,7 +440,7 @@ static void test_fs_lseek(void)
 
     //0x3100 since we read 4KB
     if (res != 0x3100) {
-        xprintf("[WARN] expected pos %i, got %i\n", 0x3100, res);
+        xprintf("[WARN] expected pos %i, got %li\n", 0x3100, res);
     }
 
     read(fd, buffer, read_size);
@@ -309,7 +457,83 @@ static void test_fs_lseek(void)
     delay(2);
 
     res = lseek(fd, 0x0, SEEK_END);
-    xprintf("[PASS] \n");
+    xprintf("[PASS] %lli\n", res);
+
+    xprintf("\n");
+
+    res = close(fd);
+    if (res == -1) {
+        xprintf("Failed to close\n");
+    }
+
+    free(buffer);
+
+    xprintf("\n");
+}
+
+static void test_fs_lseek64()
+{
+    int fd;
+    s64 res;
+    int read_size = 0x1000;
+    uint8_t *buffer = NULL;
+
+    fd = open("mmce:/256.bin", O_RDONLY);
+    if (fd < 0) {
+        xprintf("Failed to open 256.bin, %i\n", fd);
+        return;
+    }
+    
+    buffer = malloc(read_size);
+    if (buffer == NULL) {
+        xprintf("Failed malloc 0x%x bytes\n", read_size);
+        close(fd);
+        return;
+    }
+
+    xprintf("Testing: 0x44 - lseek SEEK_SET 0x2000\n");
+    delay(2);
+
+    res = lseek64(fd, 0x2000, SEEK_SET);
+    if (res != 0x2000) {
+        xprintf("[WARN] expected pos %i, got %lli\n", 0x2000, res);
+    }
+
+    read(fd, buffer, read_size);
+    res = test_fs_verify_data(buffer, read_size, 0x2000); 
+    if (res != -1) {
+        xprintf("[PASS] Data @ 0x2000 valid\n");
+    } else {
+        xprintf("[FAIL] Data @ 0x2000 invalid\n");
+    }
+
+    xprintf("\n");
+
+    xprintf("Testing: 0x44 - lseek SEEK_CUR 0x100\n");
+    delay(2);
+
+    res = lseek64(fd, 0x100, SEEK_CUR);
+
+    //0x3100 since we read 4KB
+    if (res != 0x3100) {
+        xprintf("[WARN] expected pos %i, got %lli\n", 0x3100, res);
+    }
+
+    read(fd, buffer, read_size);
+    res = test_fs_verify_data(buffer, read_size, 0x3100); 
+    if (res != -1) {
+        xprintf("[PASS] Data @ 0x3100 valid\n");
+    } else {
+        xprintf("[FAIL] Data @ 0x3100 invalid\n");
+    }
+
+    xprintf("\n");
+
+    xprintf("Testing: 0x44 - lseek SEEK_END\n");
+    delay(2);
+
+    res = lseek64(fd, 0x0, SEEK_END);
+    xprintf("[PASS] %lli\n", res);
 
     xprintf("\n");
 
@@ -324,7 +548,7 @@ static void test_fs_lseek(void)
 }
 
 /* Remove test_file.bin */
-static void test_fs_remove(void)
+static void test_fs_remove()
 {
     int res;
 
@@ -342,7 +566,7 @@ static void test_fs_remove(void)
 }
 
 /* Mkdir test_dir */
-static void test_fs_mkdir(void)
+static void test_fs_mkdir()
 {
     int res;
 
@@ -360,7 +584,7 @@ static void test_fs_mkdir(void)
 }
 
 /* Rmdir test_dir */
-static void test_fs_rmdir(void)
+static void test_fs_rmdir()
 {
     int res;
 
@@ -380,17 +604,19 @@ static void test_fs_rmdir(void)
 /* Dopen / 
  * Dclose
 */
-static void test_fs_dopen_dclose(void)
+static void test_fs_dopen_dclose()
 {
-    int fd;
     int res;
-
+    DIR *fd;
+    int iop_fd;
+    
     xprintf("Testing: 0x49 - dopen\n");
     delay(2);
 
-    fd = fioDopen("mmce:/");
+    fd = opendir("mmce:/");
     if (fd != -1) {
-        xprintf("[PASS] fd: %i\n", fd);
+        iop_fd = ps2sdk_get_iop_fd(fd->dd_fd);
+        xprintf("[PASS] fd: %i\n", iop_fd);
     } else {
         xprintf("[FAIL] error: %i\n", fd);
         return;
@@ -400,15 +626,16 @@ static void test_fs_dopen_dclose(void)
     xprintf("Testing: 0x4A - dclose\n");
     delay(2);
 
-    res = close(fd);
-    if (res != -1) {
-        xprintf("[PASS] closed: %i\n", fd);
+    res = closedir(fd);
+    if (res >= 0) {
+        xprintf("[PASS] closed: %i\n", iop_fd);
     } else {
         xprintf("[FAIL] error: %i\n", fd);
         return;
     }
     xprintf("\n");
 }
+
 
 /* Dopen /
  * Dread, print each entry
@@ -418,13 +645,13 @@ static void test_fs_dread(void)
 {
     int fd;
     int res = 0;
+    io_dirent_t dirent;
+
     fd = fioDopen("mmce:/");
     if (fd < 0) {
         xprintf("Failed to open /, %i\n", fd);
         return;
     }
-
-    io_dirent_t dirent;
 
     xprintf("Testing: 0x4B - dread\n");
     delay(2);
@@ -457,6 +684,10 @@ static void test_fs_dread(void)
         res++;
     }
 
+    xprintf("closing\n");
+    delay(2);
+
+    fioDclose(fd);
     if (res > 0) {
         xprintf("[PASS] Read %i dirents\n", res);
     } else {
@@ -465,21 +696,49 @@ static void test_fs_dread(void)
     xprintf("\n");
 }
 
+/* getstat /256.bin
+*/
+static void test_fs_getstat()
+{
+    int res;
+    struct stat st;
+    
+    xprintf("Testing: 0x4C - getstat 256.bin\n");
+    delay(2);
+
+    res = stat("mmce:/256.bin", &st);
+    if (res != 0) {
+        xprintf("[FAIL] Failed to get stat for 256.bin\n");
+    } else {
+        xprintf("[PASS]\n");
+        xprintf("Mode: 0x%x, Size: 0x%x\n", st.st_mode, st.st_size);
+        xprintf("st_ctime: %jd\n", st.st_ctime);
+        xprintf("st_mtime: %jd\n", st.st_mtime);
+        xprintf("st_atime: %jd\n", st.st_atime);
+        xprintf("\n");
+    }
+}
+
 void mmce_fs_auto_tests()
 {
+    int read_write_size = 262144; //256KB
+
     xprintf("Performing MMCE FS auto test sequence...\n");
     delay(2);
  
     test_fs_open_close();
     delay(2);
 
-    test_fs_read(262144);
+    test_fs_read(&read_write_size);
     delay(2);
 
-    test_fs_write(262144);
+    test_fs_write(&read_write_size);
     delay(2);
 
     test_fs_lseek();
+    delay(2);
+
+    test_fs_lseek64();
     delay(2);
 
     test_fs_remove();
@@ -497,138 +756,92 @@ void mmce_fs_auto_tests()
     test_fs_dread();
     delay(2);
 
+    test_fs_getstat();
+    delay(2);
+
     xprintf("Auto test complete\n");
 }
 
-static void print_tests_menu()
-{
-    xprintf(" \n");
-    xprintf("--------------------\n");
-    xprintf("><  = Open & Close 256.bin\n");
-    xprintf("/\\  = Read 256KB from 256.bin\n");
-    xprintf("[]  = Write 256KB to test_file.bin \n");
-    xprintf("()  = Test lseek w/ 256.bin\n");
-    xprintf(" \n");
-    xprintf("^   = Run auto test sweep\n");
-    xprintf(">   = Increase count\n");
-    xprintf("<   = Decrease count\n");
-    xprintf("->  = Read random amount from 256.bin x%i\n", random_count);
-    xprintf("--  = Write random amount to test_file.bin x%i\n", random_count);
-    xprintf(" \n");
-    xprintf("L1 = mkdir test_dir\n");
-    xprintf("L2 = rmdir test_dir\n");
-    xprintf("L3 = Remove test_file.bin\n");
-    xprintf("R1 = Dopen & Dclose /\n");
-    xprintf("R2 = Dread /\n");
-    xprintf("R3 = Return to Main Menu\n");
-    xprintf("--------------------\n");
-}
-
-void menu_mmce_fs_tests()
-{
-    int count_updated = 0;
-
-    time_t t;
-    srand((unsigned)time(&t));
-
-    random_count = 10;
-
-    while (true)
+menu_item_t mmce_fs_menu_items[] = {
     {
-        scr_clear();
-        print_tests_menu();
+        .text = "Open & Close 256.bin",
+        .func = &test_fs_open_close,
+        .arg = NULL
+    },
+    {
+        .text = "Read amount from 256.bin: ",
+        .func = &test_fs_read,
+        .func_inc = &pow_two_size_inc,
+        .func_dec = &pow_two_size_dec,
+        .arg = &read_size
+    },
+    {
+        .text = "Read 512 bytes beyond 256.bin",
+        .func = &test_fs_read_beyond,
+        .arg = NULL
+    },
+    {
+        .text = "Read sweep (256 - 256KB)",
+        .func = &test_fs_read_sweep,
+        .arg = NULL
+    },
+    {
+        .text = "Write amount to 256.bin: ",
+        .func = &test_fs_write,
+        .func_inc = &pow_two_size_inc,
+        .func_dec = &pow_two_size_dec,
+        .arg = &write_size
+    },
+    {
+        .text = "Test lseek w/ 256.bin",
+        .func = &test_fs_lseek,
+        .arg = NULL
+    },
+    {
+        .text = "Test lseek64 w/ 256.bin",
+        .func = &test_fs_lseek64,
+        .arg = NULL
+    },
+    {
+        .text = "Mkdir test_dir",
+        .func = &test_fs_mkdir,
+        .arg = NULL
+    },
+    {
+        .text = "Rmdir test_dir",
+        .func = &test_fs_rmdir,
+        .arg = NULL
+    },
+    {
+        .text = "Remove test_file.bin",
+        .func = &test_fs_remove,
+        .arg = NULL
+    },
+    {
+        .text = "Dopen & Dclose /",
+        .func = &test_fs_dopen_dclose,
+        .arg = NULL
+    },
+    {
+        .text = "Dread /",
+        .func = &test_fs_dread,
+        .arg = NULL
+    },
+    {
+        .text = "Get stat 256.bin",
+        .func = &test_fs_getstat,
+        .arg = NULL
+    },
+};
 
-        update_pad();
+menu_input_t mmce_fs_menu_inputs[] = {
+};
 
-        // Prevent spamming the sio every frame 
-        // as if we were printing to the screen.
-        while (!all_released())
-        {
-            delayframe();
-            update_pad();
-        }
-
-        xprintf("Processing...\n");
-        scr_clear();
-
-        if (released(PAD_CROSS))
-        {
-            test_fs_open_close();
-        }
-        else if (released(PAD_TRIANGLE))
-        {
-            test_fs_read(262144);
-        }
-        else if (released(PAD_SQUARE))
-        {
-            test_fs_write(262144);
-        }
-        else if (released(PAD_CIRCLE))
-        {
-            test_fs_lseek();
-        }
-        else if (released(PAD_LEFT))
-        {
-            if (random_count != 0) {
-                random_count--;
-                count_updated = 1;
-            }
-        } 
-        else if (released(PAD_RIGHT))
-        {
-            random_count++;
-            count_updated = 1;
-        }
-        else if (released(PAD_START))
-        {
-            for (int i = 0; i < random_count; i++) {
-                test_fs_read((rand() % 261120) + 1024);
-            }
-        }
-        else if (released(PAD_SELECT))
-        {
-            for (int i = 0; i < random_count; i++) {
-                test_fs_write((rand() % 261120) + 1024);
-            }
-        }
-        else if (released(PAD_L1))
-        {
-            test_fs_mkdir();
-        }
-        else if (released(PAD_L2))
-        {
-            test_fs_rmdir();
-        }
-        else if (released(PAD_L3))
-        {
-            test_fs_remove();
-        }
-        else if (released(PAD_R1))
-        {
-            test_fs_dopen_dclose();
-        }
-        else if (released(PAD_R2))
-        {
-            test_fs_dread();
-        }
-        else if (released(PAD_R3))
-        {
-            break;
-        }
-
-        if (count_updated != 1) {
-            xprintf("Push to continue... \n" );
-            update_pad();
-            while (!all_released())
-            {
-                delayframe();
-                update_pad();
-            }
-
-            xprintf("Done...\n");
-        } else {
-            count_updated = 0;
-        }
-        
-    } // while (true);
-}
+menu_t mmce_fs_menu = {
+    .header = "MMCE FS Tests",
+    .items = (sizeof(mmce_fs_menu_items) / sizeof(menu_item_t)),
+    //.inputs = (sizeof(mmce_fs_menu_inputs) / sizeof(menu_input_t)),
+    .inputs = 0,
+    .menu_inputs = &mmce_fs_menu_inputs[0],
+    .menu_items = &mmce_fs_menu_items[0],
+};

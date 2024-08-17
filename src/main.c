@@ -10,16 +10,23 @@
 #include <debug.h>
 #include <ps2ip.h>
 #include <netman.h>
+#include <iopcontrol.h>
+#include <iopheap.h>
+#include <sifrpc.h>
+#include <sbv_patches.h>
 
 #define NEWLIB_PORT_AWARE
-#include <fileio.h>
+#include <fileXio_rpc.h>
 #include <io_common.h>
 
 #include "include/common.h"
 #include "include/pad.h"
 
+#include "include/menu.h"
+
 #include "include/mmce_cmd_tests.h"
 #include "include/mmce_fs_tests.h"
+#include "include/mmce_mc_tests.h"
 
 #define IRX_DEFINE(mod)                     \
     extern unsigned char mod##_irx[];       \
@@ -32,14 +39,9 @@ extern unsigned char test_256_bin[];
     if (SifExecModuleBuffer(mod##_irx, size_##mod##_irx, 0, NULL, NULL) < 0)    \
     printf("Could not load ##mod##\n")
 
-#define xprintf(f_, ...)         \
-    printf((f_), ##__VA_ARGS__); \
-    scr_printf("    ");          \
-    scr_printf((f_), ##__VA_ARGS__);
-
-IRX_DEFINE(mcman);
-IRX_DEFINE(mmceman);
 IRX_DEFINE(sio2man);
+IRX_DEFINE(mmceman);
+IRX_DEFINE(mcman);
 IRX_DEFINE(padman);
 
 //For network printf
@@ -49,66 +51,20 @@ IRX_DEFINE(smap);
 IRX_DEFINE(ps2ip_nm);
 IRX_DEFINE(udptty);
 
-void print_main_menu()
-{
-    xprintf(" \n");
-    xprintf("--------------------\n");
-    xprintf("^   = Run auto test sweep\n");
-    xprintf("->  = MMCE Filesystem tests\n");
-    xprintf("--  = MMCE Command tests\n");
-    xprintf("R3 = Exit\n");
-    xprintf("--------------------\n");
-}
+IRX_DEFINE(iomanX);
+IRX_DEFINE(fileXio);
 
-void menu_main_loop()
-{
-    while (true) {
-        scr_clear();
-        print_main_menu();
+#define PAGES 3
 
-        update_pad();
-        // Prevent spamming the sio every frame 
-        // as if we were printing to the screen.
-        while (!all_released())
-        {
-            delayframe();
-            update_pad();
-        }
+typedef struct page_t {
+    menu_t *menu;
+} page_t;
+page_t page[PAGES]; //CMD tests, FS tests, MC tests
+static int page_idx = 0;
 
-        if (released(PAD_UP))
-        {
-            mmce_fs_auto_tests();
-            mmce_cmd_auto_tests();
-            delay(2);
-        }
-        else if (released(PAD_START))
-        {
-            menu_mmce_fs_tests();
-        } 
-        else if (released(PAD_SELECT))
-        {
-            menu_mmce_cmd_tests();
-        }
-        else if (released(PAD_R3))
-        {
-            break;
-        }
-
-        xprintf("Push to continue... \n" );
-        update_pad();
-        while (!all_released())
-        {
-            delayframe();
-            update_pad();
-        }
-
-        xprintf("Done...\n");
-    }
-}
 /// @return a button was pressed on the pad, interrupting the countdown.
 static bool countdown()
 {
-
     xprintf("Auto test will run in 3 seconds, press the Any key for manual operation\n");
 
     for (int i = 4; i > 0; i--)
@@ -138,46 +94,30 @@ static int eth_wait(int seconds)
     return -1;
 }
 
-//TODO: temp
-static void probe_port()
-{
-    int fd;
-    int res;
-
-    fd = open("mmce:dev", O_RDONLY);
-    if (fd < 0) {
-        xprintf("Failed to open mmce:dev\n");
-        return;
-    }
-    res = fioIoctl(fd, MMCEMAN_IOCTL_PROBE_PORT, NULL);
-    if (res == 2) {
-        xprintf("Found MMCE on port 2 (MC2)\n");
-    } else if (res == 3) {
-        xprintf("Found MMCE on port 3 (MC2)\n");
-    } else {
-        xprintf("Failed to find MMCE\n");
-    }
-
-    close(fd);
-}
-
 int main()
 {
     struct ip4_addr IP, NM, GW, DNS;
 	int EthernetLinkMode;
 
+    SifExitIopHeap();
+    SifLoadFileExit();
+    SifExitRpc();
     SifInitRpc(0);
-    while (!SifIopReset("", 0)) {};
-    while (!SifIopSync()) {};
 
-    SifInitIopHeap(); // Initialize SIF services for loading modules and files.
+    while(!SifIopReset(NULL, 0)){};
+    while(!SifIopSync()) {};
+    
+    SifInitRpc(0);
+    SifInitIopHeap();
     SifLoadFileInit();
-    sbv_patch_enable_lmb(); // The old IOP kernel has no support for LoadModuleBuffer. Apply the patch to enable it.
-    sbv_patch_disable_prefix_check(); /* disable the MODLOAD module black/white list, allowing executables to be freely loaded from any device. */
-    sbv_patch_fileio();     // Prevent fileio calling mkdir after remove
+    sbv_patch_enable_lmb();
+    sbv_patch_disable_prefix_check(); // Disable the MODLOAD module black/white list, allowing executables to be freely loaded from any device.
+    sbv_patch_fileio();               // Prevent fileio calling mkdir after remove
 
     init_scr();
+    scr_clear();
 
+    //Load network modules
     IRX_LOAD(ps2dev9);
     IRX_LOAD(netman);
     IRX_LOAD(smap);
@@ -194,12 +134,16 @@ int main()
 
     //Wait for the link to become ready.
 	xprintf("Waiting for connection...\n");
-	//Wait 5 seconds
     if(eth_wait(5) != 0) {
 		xprintf("Error: failed to get valid link status.\n");
 	}
 
     IRX_LOAD(udptty);
+
+    IRX_LOAD(iomanX);    
+    IRX_LOAD(fileXio);
+
+    fileXioInit();
 
     xprintf("Loading sio2man\n");
     IRX_LOAD(sio2man);
@@ -208,19 +152,12 @@ int main()
     xprintf("Loading mmceman\n");
     IRX_LOAD(mmceman);
     delay(1);
-    
+
     xprintf("Loading mcman\n");
     IRX_LOAD(mcman);
 
     xprintf("Loading padman\n");
     IRX_LOAD(padman);
-
-    //Temp, attempt to determine port MMCE is connected to
-    probe_port();
-    
-    // Perform a short automatic sequence
-    // if we fail to init the pads or
-    // interrupt the countdown timer
     
     bool padInited = init_pad();
 
@@ -242,11 +179,33 @@ int main()
         return 0;
     }
 
-    // in case you've been mashing the keys a bit
-    update_pad();
-    delay(1);
+    //Assign menus to pages
+    page[0].menu = &mmce_fs_menu;
+    page[1].menu = &mmce_cmd_menu;
+    page[2].menu = &mmce_mc_menu;
 
-    menu_main_loop();
+    scr_setCursor(0); //disable cursor
+
+    while (true)
+    {
+        menu_draw(page[page_idx].menu);
+
+        update_pad();
+
+        while (!all_released())
+        {
+            delayframe();
+            update_pad();
+        }
+
+        if (released(PAD_R1) && page_idx < (PAGES -1))
+            page_idx++;
+
+        if (released(PAD_L1) && page_idx > 0)
+            page_idx--;
+
+        menu_update_input(page[page_idx].menu);
+    }
 
     return 0;
 }

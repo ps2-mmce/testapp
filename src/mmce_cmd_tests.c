@@ -5,31 +5,52 @@
 #include <time.h>
 
 #define NEWLIB_PORT_AWARE
-#include <fileio.h>
+#include <fileXio_rpc.h>
 #include <io_common.h>
 
 #include "include/pad.h"
 #include "include/common.h"
 #include "include/mmce_cmd_tests.h"
 
-/* TODO: using read/write with the actual gameid length
- * can cause fileio to break the transfer down into multiple
- * calls to mmceman_fs_read/write which causes a second read 
- * or write with the current setup. For now use 
- * read/write(fd, buff, MAX_GAMEID_LEN) */
 #define MAX_GAMEID_LEN 256
 
-static int mmce_dev_fd;
-static int mmce_gameid_fd;
+menu_t mmce_cmd_menu;
+
+static int channel_num;
+static int card_num;
+
+static void channel_num_inc()
+{
+    if (channel_num < 8)
+        channel_num++;
+}
+
+static void channel_num_dec()
+{
+    if (channel_num > 0)
+        channel_num--;
+}
+
+static void card_num_inc()
+{
+    if (card_num < 512)
+        card_num++;
+}
+
+static void card_num_dec()
+{
+    if (card_num > 0)
+        card_num--;
+}
 
 static void wait_for_card(int timeout)
 {
     int res;
 
     xprintf("Polling card with ping, you can safely ignore the following failed ping msgs:\n");
-
+  
     for (int i = 0; i < timeout; i++) {
-        res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_PING, NULL);
+        res = fileXioDevctl("mmce:", MMCEMAN_CMD_PING, NULL, 0, NULL, 0);
         if (res != -1)
             break;
 
@@ -37,31 +58,42 @@ static void wait_for_card(int timeout)
     }
 }
 
-static void test_cmd_ping(void)
+static void test_cmd_ping()
 {
     int res;
 
     xprintf("Testing: 0x01 - Ping\n");
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_PING, NULL);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_PING, NULL, 0, NULL, 0);
     if (res != -1) {
-        xprintf("[PASS] proto ver: 0x%x, prod id: 0x%x, rev id: 0x%x\n", res >> 16, (res >> 8) & 0xff, res & 0xff);
+        xprintf("[PASS]\n");
+
+        if (((res & 0xFF00) >> 8) == 1) {
+            xprintf("Product id: 1 (SD2PSX)\n");
+        } else if (((res & 0xFF00) >> 8) == 2) {
+            xprintf("Product id: 2 (MemCard PRO2)\n");
+        } else {
+            xprintf("Product id: %i (unknown)\n", ((res & 0xFF00) >> 8));
+        }
+        
+        xprintf("Revision id: %i\n", (res & 0xFF));
+        xprintf("Protocol Version: %i\n", (res & 0xFF0000) >> 16);
     } else {
         xprintf("[FAIL] error: %i\n", res);
     }
     xprintf("\n");
 }
 
-static void test_cmd_get_status(void)
+static void test_cmd_get_status()
 {
     xprintf("Not implemented\n");
 }
 
-static void test_cmd_get_card(void)
+static void test_cmd_get_card()
 {
     int res;
 
     xprintf("Testing: 0x3 - Get Card\n");
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_GET_CARD, NULL);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_GET_CARD, NULL, 0, NULL, 0);
     if (res != -1) {
         xprintf("[PASS] current card: %i\n", res);
     } else {
@@ -88,21 +120,21 @@ static void test_cmd_set_card(uint8_t type, uint8_t mode, uint16_t num)
         xprintf("Testing: 0x4 - Set Card [PREV]\n");
     }
 
-    card = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_GET_CARD, NULL);
+    card = fileXioDevctl("mmce:", MMCEMAN_CMD_GET_CARD, NULL, 0, NULL, 0);
     if (card == -1) {
         xprintf("[FAIL] error getting current card: %i\n", card);
         return;
     }
     
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_SET_CARD, &param);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_SET_CARD, &param, 4, NULL, 0);
     if (res == -1) {
         xprintf("[FAIL] error setting card: %i\n", res);
         return;
     }
 
-    wait_for_card(10); //Wait 10 seconds for card to resp to ping
+    wait_for_card(15); //Wait 15 seconds for card to resp to ping
 
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_GET_CARD, NULL);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_GET_CARD, NULL, 0, NULL, 0);
     if (card == -1) {
         xprintf("[FAIL] error getting current card: %i\n", card);
         return;
@@ -117,12 +149,27 @@ static void test_cmd_set_card(uint8_t type, uint8_t mode, uint16_t num)
     xprintf("\n");  
 }
 
+static void test_cmd_set_card_next()
+{
+    test_cmd_set_card(0, 1, 0);
+}
+
+static void test_cmd_set_card_prev()
+{
+    test_cmd_set_card(0, 2, 0);
+}
+
+static void test_cmd_set_card_direct()
+{
+    test_cmd_set_card(0, 0, card_num);
+}
+
 static void test_cmd_get_channel(void)
 {
     int res;
 
     xprintf("Testing: 0x5 - Get Channel\n");
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_GET_CHANNEL, NULL);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
     if (res != -1) {
         xprintf("[PASS] current channel: %i\n", res);
     } else {
@@ -134,7 +181,7 @@ static void test_cmd_get_channel(void)
 static void test_cmd_set_channel(uint8_t mode, uint16_t num)
 {
     int res;
-    int card;
+    int chan;
     uint32_t param;
 
     param  = mode << 16;
@@ -148,33 +195,48 @@ static void test_cmd_set_channel(uint8_t mode, uint16_t num)
         xprintf("Testing: 0x6 - Set Channel [PREV]\n");
     }
 
-    card = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_GET_CHANNEL, NULL);
-    if (card == -1) {
-        xprintf("[FAIL] error getting current channel: %i\n", card);
+    chan = fileXioDevctl("mmce:", MMCEMAN_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
+    if (chan == -1) {
+        xprintf("[FAIL] error getting current channel: %i\n", chan);
         return;
     }
     
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_SET_CHANNEL, &param);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_SET_CHANNEL, &param, 4, NULL, 0);
     if (res == -1) {
         xprintf("[FAIL] error setting channel: %i\n", res);
         return;
     }
 
-    wait_for_card(10); //Wait 10 seconds for card to resp to ping
+    wait_for_card(15); //Wait 15 seconds for chan to resp to ping
 
-    res = fioIoctl(mmce_dev_fd, MMCEMAN_CMD_GET_CHANNEL, NULL);
-    if (card == -1) {
-        xprintf("[FAIL] error getting current channel: %i\n", card);
+    res = fileXioDevctl("mmce:", MMCEMAN_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
+    if (chan == -1) {
+        xprintf("[FAIL] error getting current channel: %i\n", chan);
         return;
     }
 
-    if (card == res) {
-        xprintf("[FAIL] channel not changed: %i, %i\n", card, res);
+    if (chan == res) {
+        xprintf("[FAIL] channel not changed: %i, %i\n", chan, res);
     } else {
-        xprintf("[PASS] channel: %i -> %i\n", card, res);
+        xprintf("[PASS] channel: %i -> %i\n", chan, res);
     }
 
     xprintf("\n");  
+}
+
+static void test_cmd_set_channel_next()
+{
+    test_cmd_set_channel(1, 0);
+}
+
+static void test_cmd_set_channel_prev()
+{
+    test_cmd_set_channel(2, 0);
+}
+
+static void test_cmd_set_channel_direct()
+{
+    test_cmd_set_channel(0, card_num);
 }
 
 static void test_cmd_get_gameid()
@@ -183,7 +245,7 @@ static void test_cmd_get_gameid()
     char gameid[MAX_GAMEID_LEN];
 
     xprintf("Testing: 0x7 - Get GameID\n");
-    res = read(mmce_gameid_fd, gameid, MAX_GAMEID_LEN);
+    fileXioDevctl("mmce:", MMCEMAN_CMD_GET_GAMEID, NULL, 0, &gameid, MAX_GAMEID_LEN);
 
     if (res != -1) {
         xprintf("[PASS] GameID: %s\n", gameid);
@@ -204,21 +266,22 @@ static void test_cmd_set_gameid(char *gameid)
     memset(new_gameid, 0, sizeof(new_gameid));
 
     xprintf("Testing: 0x8 - Set GameID (%s)\n", gameid);
-    res = read(mmce_gameid_fd, old_gameid, MAX_GAMEID_LEN);
+
+    fileXioDevctl("mmce:", MMCEMAN_CMD_GET_GAMEID, NULL, 0, &old_gameid, MAX_GAMEID_LEN);
     if (res == -1) {
         xprintf("[FAIL] error getting GameID: %i\n", res);
         return;
     }
 
-    res = write(mmce_gameid_fd, gameid, MAX_GAMEID_LEN);
+    fileXioDevctl("mmce:", MMCEMAN_CMD_SET_GAMEID, gameid, MAX_GAMEID_LEN, NULL, 0);
     if (res == -1) {
         xprintf("[FAIL] error setting GameID: %i\n", res);
         return;
     }
 
-    wait_for_card(10); //Wait 10 seconds for card to resp to ping
+    wait_for_card(15); //Wait 15 seconds for card to resp to ping
 
-    res = read(mmce_gameid_fd, new_gameid, MAX_GAMEID_LEN);
+    fileXioDevctl("mmce:", MMCEMAN_CMD_GET_GAMEID, NULL, 0, &new_gameid, MAX_GAMEID_LEN);
     if (res == -1) {
         xprintf("[FAIL] error getting GameID: %i\n", res);
         return;
@@ -233,47 +296,21 @@ static void test_cmd_set_gameid(char *gameid)
     xprintf("\n");
 }
 
-static int mmce_cmd_open_dev_fd()
+static void test_cmd_set_gameid1()
 {
-    mmce_dev_fd = open("mmce:dev", O_RDWR);
-    if (mmce_dev_fd < 0) {
-        xprintf("failed to open mmce dev\n");
-    } else {
-        xprintf("opened dev fd: %i\n", mmce_dev_fd);
-    }
+    const char *gameid = "SLUS-21230\0"; 
+    test_cmd_set_gameid(gameid);
 }
 
-static int mmce_cmd_open_reserved_fd()
+static void test_cmd_set_gameid2()
 {
-    mmce_dev_fd = open("mmce:dev", O_RDWR);
-    if (mmce_dev_fd < 0) {
-        xprintf("failed to open mmce:dev\n");
-        return -1;
-    }
-
-    mmce_gameid_fd = open("mmce:gameid", O_RDWR);
-    if (mmce_gameid_fd < 0) {
-        xprintf("failed to open mmce:gameid\n");
-        return -1;
-    }
-
-    return 0;
-}
-
-static void mmce_cmd_close_reserved_fd()
-{
-    close(mmce_dev_fd);
-    close(mmce_gameid_fd);
+    const char *gameid = "PBPX-95503\0"; 
+    test_cmd_set_gameid(gameid);
 }
 
 void mmce_cmd_auto_tests()
 {
-    time_t t;
-    srand((unsigned)time(&t));
-
-    char gameid[0x250] = {'S', 'L', 'U', 'S', '-', '2', '0', '9', '1', '5', '\0'};
-
-    mmce_cmd_open_reserved_fd();
+    const char *gameid = "SLUS-20915\0"; 
 
     xprintf("Performing MMCE CMD auto test sequence...\n");
     delay(2);
@@ -290,7 +327,7 @@ void mmce_cmd_auto_tests()
     test_cmd_set_card(0, 2, 0);
     delay(2);
 
-    test_cmd_set_card(0, 0, rand() % 1024);
+    test_cmd_set_card(0, 0, 10);
     delay(2);
 
     test_cmd_get_channel();
@@ -302,7 +339,7 @@ void mmce_cmd_auto_tests()
     test_cmd_set_channel(2, 0);
     delay(2);
 
-    test_cmd_set_channel(0, (rand() % 7) + 1);
+    test_cmd_set_channel(0, 5);
     delay(2);
 
     test_cmd_set_gameid(gameid);
@@ -311,127 +348,83 @@ void mmce_cmd_auto_tests()
     test_cmd_get_gameid();
     delay(2);
 
-    mmce_cmd_close_reserved_fd();
-
     xprintf("Auto test complete\n");
 }
 
-static void print_tests_menu()
-{
-    xprintf(" \n");
-    xprintf("--------------------\n");
-    xprintf("><  = Ping\n");
-    xprintf("/\\  = Get GameID\n");
-    xprintf("[]  = Set Game = Katamari (SLUS-21230) \n");
-    xprintf("()  = Set Game = GT3 (PBPX-95503)\n");
-    xprintf(" \n");
-    xprintf("^   = Run auto test sweep\n");
-    xprintf("->  = Get Card\n");
-    xprintf("--  = Get Status\n");
-    xprintf(" \n");
-    xprintf("R1 = Next Chan\n");
-    xprintf("L1 = Prev Chan\n");
-    xprintf("R2 = Next Card\n");
-    xprintf("L2 = Prev Card\n");
-    xprintf("R3 = Return to Main Menu\n");
-    xprintf("--------------------\n");
-}
-
-void menu_mmce_cmd_tests()
-{
-    mmce_cmd_open_reserved_fd();
-
-    while (true)
+menu_item_t mmce_cmd_menu_items[] = {
     {
-        scr_clear();
-        print_tests_menu();
+        .text = "Ping",
+        .func = &test_cmd_ping,
+        .arg = NULL
+    },
+    {
+        .text = "Get Status",
+        .func = &test_cmd_get_status,
+        .arg = NULL
+    },
+    {
+        .text = "Get Card",
+        .func = &test_cmd_get_card,
+        .arg = NULL
+    },
+    {
+        .text = "Set Card Next",
+        .func = &test_cmd_set_card_next,
+        .arg = NULL
+    },
+    {
+        .text = "Set Card Prev",
+        .func = &test_cmd_set_card_prev,
+        .arg = NULL
+    },
+    {
+        .text = "Set Card:",
+        .func = &test_cmd_set_card_direct,
+        .func_inc = &card_num_inc,
+        .func_dec = &card_num_dec,
+        .arg = &card_num
+    },
+    {
+        .text = "Set Channel Next",
+        .func = &test_cmd_set_channel_next,
+        .arg = NULL
+    },
+    {
+        .text = "Set Channel Prev",
+        .func = &test_cmd_set_channel_prev,
+        .arg = NULL
+    },
+    {
+        .text = "Set Channel:",
+        .func = &test_cmd_set_channel_direct,
+        .func_inc = &channel_num_inc,
+        .func_dec = &channel_num_dec,
+        .arg = &channel_num
+    },
+    {
+        .text = "Get GameID",
+        .func = &test_cmd_get_gameid,
+        .arg = NULL
+    },
+    {
+        .text = "Set GameID: Katamari (SLUS-21230)",
+        .func = &test_cmd_set_gameid1,
+        .arg = NULL
+    },
+    {
+        .text = "Set GameID: GT3 (PBPX-95503)",
+        .func = &test_cmd_set_gameid2,
+        .arg = NULL
+    },
+};
 
-        update_pad();
+menu_input_t mmce_cmd_menu_inputs[] = {};
 
-        // Prevent spamming the sio every frame 
-        // as if we were printing to the screen.
-        while (!all_released())
-        {
-            delayframe();
-            update_pad();
-        }
-
-        xprintf("Processing...\n");
-        scr_clear();
-        
-        // Ping & GameID
-
-        if (released(PAD_CROSS))
-        {
-            test_cmd_ping();
-        }
-        else if (released(PAD_CIRCLE))
-        {
-            // Gran Turismo 3 - A-Spec
-            char gameid[0x250] = {'S', 'L', 'U', 'S', '-', '2', '1', '2', '3', '0', '\0'};
-            test_cmd_set_gameid(gameid);
-        }
-        else if (released(PAD_SQUARE))
-        {
-            // Gran Turismo 3 - A-Spec
-            char gameid[0x250] = {'P', 'B', 'P', 'X', '-', '9', '5', '5', '0', '3', '\0'};
-            test_cmd_set_gameid(gameid);
-        }
-        else if (released(PAD_TRIANGLE))
-        {
-            test_cmd_get_gameid();
-        }
-
-
-        // Chan and Card Switch:
-
-        if (released(PAD_L1))
-        {
-            test_cmd_set_channel(2, 0);
-        }
-        else if (released(PAD_L2))
-        {
-            test_cmd_set_card(0, 2, 0);
-        }
-        else if (released(PAD_L3))
-        {
-            //
-        }
-        else if (released(PAD_R1))
-        {
-            test_cmd_set_channel(1, 0);
-        }
-        else if (released(PAD_R2))
-        {
-            test_cmd_set_card(0, 1, 0);
-        }
-        else if (released(PAD_R3))
-        {
-            break;
-        }
-
-        // Read info:
-
-        if (released(PAD_START))
-        {
-            test_cmd_get_card();
-        }
-        else if (released(PAD_SELECT))
-        {
-            test_cmd_get_status();
-        }
-
-        xprintf("Push to continue... \n" );
-        update_pad();
-        while (!all_released())
-        {
-            delayframe();
-            update_pad();
-        }
-
-        xprintf("Done...\n");
-        
-    } // while (true);
-
-    mmce_cmd_close_reserved_fd();
-}
+menu_t mmce_cmd_menu = {
+    .header = "MMCE CMD Tests",
+    .items = (sizeof(mmce_cmd_menu_items) / sizeof(menu_item_t)),
+    //.inputs = (sizeof(mmce_cmd_menu_inputs) / sizeof(menu_input_t)),
+    .inputs = 0,
+    .menu_inputs = &mmce_cmd_menu_inputs[0],
+    .menu_items = &mmce_cmd_menu_items[0],
+};
