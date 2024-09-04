@@ -14,6 +14,7 @@
 #include <iopheap.h>
 #include <sifrpc.h>
 #include <sbv_patches.h>
+#include <libmc.h>
 
 #define NEWLIB_PORT_AWARE
 #include <fileXio_rpc.h>
@@ -42,6 +43,7 @@ extern unsigned char test_256_bin[];
 IRX_DEFINE(sio2man);
 IRX_DEFINE(mmceman);
 IRX_DEFINE(mcman);
+IRX_DEFINE(mcserv);
 IRX_DEFINE(padman);
 
 //For network printf
@@ -156,9 +158,17 @@ int main()
     xprintf("Loading mcman\n");
     IRX_LOAD(mcman);
 
+    xprintf("Loading mcserv\n");
+    IRX_LOAD(mcserv);
+
     xprintf("Loading padman\n");
     IRX_LOAD(padman);
     
+    //Init MC RPC
+	if(mcInit(MC_TYPE_XMC) < 0) {
+		printf("Failed to initialise memcard server!\n");
+	}
+
     bool padInited = init_pad();
 
     if (!padInited)

@@ -16,6 +16,7 @@ typedef struct menu_item_t {
     void (*func_inc)(void *arg);
     void (*func_dec)(void *arg);
     void *arg;
+    int arg_type;
 } menu_item_t;
 
 typedef struct menu_input_t {

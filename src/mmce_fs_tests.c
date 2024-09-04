@@ -22,6 +22,11 @@
 static int read_size = 256;
 static int write_size = 256;
 
+static const char *prefix[] = {"mmce0:", "mmce1:"};
+static int prefix_idx = 0;
+
+static char path[64] = "mmce0:";
+
 static int test_fs_verify_data(uint8_t *buffer, uint32_t size, uint32_t offset)
 {
     int res = 0;
@@ -71,6 +76,22 @@ static int test_fs_verify_data(uint8_t *buffer, uint32_t size, uint32_t offset)
     return res;
 }
 
+static void prefix_inc(void *arg)
+{
+    int num = *(int*)arg;
+    if (num < 1)
+        num++;
+    *(int*)arg = num;
+}
+
+static void prefix_dec(void *arg)
+{
+    int num = *(int*)arg;
+    if (num > 0)
+        num--;
+    *(int*)arg = num;
+}
+
 static void pow_two_size_inc(void *arg)
 {
     int size = *(int*)arg;
@@ -100,10 +121,12 @@ static void test_fs_open_close()
     int iop_fd;
     int res;
 
+    sprintf(path, "%s/256.bin", prefix[prefix_idx]);
+
     xprintf("Testing: 0x40 - Open\n");
     delay(2);
 
-    fd = open("mmce:/256.bin", O_RDONLY);
+    fd = open(path, O_RDONLY);
     if (fd != -1) {
         iop_fd = ps2sdk_get_iop_fd(fd);
         xprintf("[PASS] fd: %i\n", iop_fd);
@@ -140,7 +163,9 @@ static void test_fs_read(void *arg)
 
     int size = *(int*)arg;
 
-    fd = open("mmce:/256.bin", O_RDONLY);
+    sprintf(path, "%s/256.bin", prefix[prefix_idx]);
+
+    fd = open(path, O_RDONLY);
     if (fd < 0) {
         xprintf("Failed to open 256.bin, %i\n", fd);
         return;
@@ -200,14 +225,16 @@ static void test_fs_read_beyond()
     uint8_t *buffer = NULL;
     struct timeval tv_start, tv_end;
 
-    uint8_t size = 512;
+    int size = 512;
 
-    fd = open("mmce:/256.bin", O_RDONLY);
+    sprintf(path, "%s/256.bin", prefix[prefix_idx]);
+
+    fd = open(path, O_RDONLY);
     if (fd < 0) {
         xprintf("Failed to open 256.bin, %i\n", fd);
         return;
     }
-    
+
     buffer = malloc(size);
     if (buffer == NULL) {
         xprintf("Failed malloc 0x%x bytes\n", size);
@@ -215,7 +242,15 @@ static void test_fs_read_beyond()
         return;
     }
 
-    xprintf("Testing: 0x42 - Read (512 bytes over file size)\n");
+    xprintf("Seeking to end\n");
+    res = lseek(fd, 0, SEEK_END);
+    xprintf("Got %i\n", res);
+
+    xprintf("Seeking back 150 bytes\n");
+    res = lseek(fd, -150, SEEK_CUR);
+    xprintf("Got %i\n", res);
+
+    xprintf("Testing: 0x42 - Read (362 bytes over filesize)\n");
     delay(2);
 
     gettimeofday(&tv_start, 0);
@@ -229,8 +264,10 @@ static void test_fs_read_beyond()
     xprintf("Read %dKB (%d bytes) in %.2fms, speed = %.2fKB/s\n", size/1024, size, msec, (float)size/msec);
     xprintf("Verifying data...\n");
 
-    if (res != size) {
-        xprintf("[Warn] expected %i, got %i\n", size, res);
+    if (res == 150) {
+        xprintf("[PASS] Only read %i bytes\n", res);
+    } else {
+        xprintf("[FAIL] Read more than expected, %i\n", res);
     }
 
     res = close(fd);
@@ -320,7 +357,9 @@ static void test_fs_write(void *arg)
 
     int size = *(int*)arg;
 
-    fd = open("mmce:/test_file.bin", O_CREAT | O_RDWR);
+    sprintf(path, "%s/testfile.bin", prefix[prefix_idx]);
+
+    fd = open(path, O_CREAT | O_RDWR);
     if (fd < 0) {
         xprintf("Failed to open test_file.bin, %i\n", fd);
         return;
@@ -345,7 +384,7 @@ static void test_fs_write(void *arg)
     if (res != size) {
         xprintf("[WARN] expected %i, got %i\n", size, res);
     }
-        
+
     xprintf("\n");
     xprintf("Wrote %dKB (%d bytes) in %dms, speed = %dKB/s\n", size/1024, size, msec, size/msec);
     xprintf("Verifying data...\n");
@@ -356,7 +395,7 @@ static void test_fs_write(void *arg)
         xprintf("Failed to close\n");
     }
 
-    fd = open("mmce:/test_file.bin", O_RDONLY);
+    fd = open(path, O_RDONLY);
     if (fd < 0) {
         xprintf("Failed to open test_file.bin, %i\n", fd);
         return;
@@ -402,7 +441,9 @@ static void test_fs_lseek()
     int read_size = 0x1000;
     uint8_t *buffer = NULL;
 
-    fd = open("mmce:/256.bin", O_RDONLY);
+    sprintf(path, "%s/256.bin", prefix[prefix_idx]);
+
+    fd = open(path, O_RDONLY);
     if (fd < 0) {
         xprintf("Failed to open 256.bin, %i\n", fd);
         return;
@@ -478,7 +519,9 @@ static void test_fs_lseek64()
     int read_size = 0x1000;
     uint8_t *buffer = NULL;
 
-    fd = open("mmce:/256.bin", O_RDONLY);
+    sprintf(path, "%s/256.bin", prefix[prefix_idx]);
+
+    fd = open(path, O_RDONLY);
     if (fd < 0) {
         xprintf("Failed to open 256.bin, %i\n", fd);
         return;
@@ -552,10 +595,12 @@ static void test_fs_remove()
 {
     int res;
 
+    sprintf(path, "%s/test_file.bin", prefix[prefix_idx]);
+
     xprintf("Testing: 0x46 - remove\n");
     delay(2);
 
-    res = remove("mmce:/test_file.bin");
+    res = remove(path);
     if (res != -1) {
         xprintf("[PASS]\n");
     } else {
@@ -569,11 +614,12 @@ static void test_fs_remove()
 static void test_fs_mkdir()
 {
     int res;
+    sprintf(path, "%s/test_dir", prefix[prefix_idx]);
 
     xprintf("Testing: 0x47 - mkdir\n");
     delay(2);
 
-    res = mkdir("mmce:/test_dir", 0);
+    res = mkdir(path, 0);
     if (res != -1) {
         xprintf("[PASS]\n");
     } else {
@@ -588,10 +634,12 @@ static void test_fs_rmdir()
 {
     int res;
 
+    sprintf(path, "%s/test_dir", prefix[prefix_idx]);
+
     xprintf("Testing: 0x48 - rmdir\n");
     delay(2);
 
-    res = rmdir("mmce:/test_dir");
+    res = rmdir(path);
     if (res != -1) {
         xprintf("[PASS]\n");
     } else {
@@ -613,7 +661,9 @@ static void test_fs_dopen_dclose()
     xprintf("Testing: 0x49 - dopen\n");
     delay(2);
 
-    fd = opendir("mmce:/");
+    sprintf(path, "%s/", prefix[prefix_idx]);
+
+    fd = opendir(path);
     if (fd != -1) {
         iop_fd = ps2sdk_get_iop_fd(fd->dd_fd);
         xprintf("[PASS] fd: %i\n", iop_fd);
@@ -647,7 +697,9 @@ static void test_fs_dread(void)
     int res = 0;
     io_dirent_t dirent;
 
-    fd = fioDopen("mmce:/");
+    sprintf(path, "%s/", prefix[prefix_idx]);
+    
+    fd = fioDopen(path);
     if (fd < 0) {
         xprintf("Failed to open /, %i\n", fd);
         return;
@@ -702,11 +754,13 @@ static void test_fs_getstat()
 {
     int res;
     struct stat st;
-    
+
+    sprintf(path, "%s/256.bin", prefix[prefix_idx]);
+
     xprintf("Testing: 0x4C - getstat 256.bin\n");
     delay(2);
 
-    res = stat("mmce:/256.bin", &st);
+    res = stat(path, &st);
     if (res != 0) {
         xprintf("[FAIL] Failed to get stat for 256.bin\n");
     } else {
@@ -763,6 +817,13 @@ void mmce_fs_auto_tests()
 }
 
 menu_item_t mmce_fs_menu_items[] = {
+    {
+        .text = "MMCE Slot:",
+        .func = NULL,
+        .func_inc = &prefix_inc,
+        .func_dec = &prefix_dec,
+        .arg = &prefix_idx
+    },
     {
         .text = "Open & Close 256.bin",
         .func = &test_fs_open_close,

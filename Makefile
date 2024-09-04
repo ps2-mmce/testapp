@@ -1,7 +1,7 @@
 
 EE_BIN = mmceman_testapp.elf
 
-EE_LIBS = -lpad -lc -lnetman -lps2ip -ldebug -lpatches -lfileXio
+EE_LIBS = -lmc -lpad -lc -lnetman -lps2ip -ldebug -lpatches -lfileXio
 
 EE_OBJS = src/menu.o src/common.o src/pad.o src/mmce_cmd_tests.o src/mmce_fs_tests.o src/mmce_mc_tests.o src/pattern_256.o src/main.o
 ROOT_DIR:=$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
@@ -13,6 +13,7 @@ EE_IRX_FILES =\
 	sio2man.irx\
 	mmceman.irx\
 	mcman.irx \
+	mcserv.irx \
 	padman.irx \
 	ps2dev9.irx \
 	netman.irx \
