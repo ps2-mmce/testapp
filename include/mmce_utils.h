@@ -1,11 +1,19 @@
 #ifndef MMCE_UTILS.H
-#define MMCE_UTILS.H
+#define MMCE_UTILS .H
 
 #include <stdint.h>
 #include <stdio.h>
 
 #define CRCPOLY 0xEDB88320
 static u32 crcTable[256];
+
+#define LFSR_SEED 0x12345678
+#define SECTOR_SIZE 2048
+#define TEST_ISO_FILE_SIZE 1024 * 1024 * 1024
+#define TEST_ISO_NUM_SECTORS TEST_ISO_FILE_SIZE / SECTOR_SIZE
+
+static u32 lfsr = 0;
+static u32 lfsr_seed = 0x00;
 
 static void crc_init_table()
 {
@@ -32,7 +40,6 @@ static void crc_init_table()
     }
 }
 
-
 u32 crc_calc(const u8 *inData, u32 inLength)
 {
     // settings:
@@ -51,8 +58,18 @@ u32 crc_calc(const u8 *inData, u32 inLength)
     return crc ^ 0xFFFFFFFF;
 }
 
-static u32 lfsr_start_value = 0x00;
 
+void lfsr_reset()
+{
+    lfsr = lfsr_seed;
+}
 
+uint32_t lfsr_random(uint32_t bits)
+{
+    // likely not the best lfsr ever written lol
+    uint32_t bit = 0;
+    lfsr = ((lfsr >> 1) ^ (lfsr >> 7) ^ (lfsr + bits) ^ (lfsr >> 15));
+    return lfsr;
+}
 
 #endif
