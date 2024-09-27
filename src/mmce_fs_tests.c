@@ -18,6 +18,7 @@
 #include "include/pad.h"
 #include "include/common.h"
 #include "include/mmce_fs_tests.h"
+#include "include/mmce_utils.h"
 
 static int read_size = 256;
 static int write_size = 256;
@@ -110,6 +111,19 @@ static void pow_two_size_dec(void *arg)
         size = 1;
 
     *(int*)arg = size;
+}
+
+static void lfsr_size_inc(void * arg){
+    uint32_t val = *(uint32_t*)arg;
+    val += 1;
+    *(uint32_t*)arg = val;
+}
+
+static void lfsr_size_dec(void * arg){
+    // let it wrap around, why not
+    uint32_t val = *(uint32_t*)arg;
+    val -= 1;
+    *(uint32_t*)arg = val;
 }
 
 /* Open 256.bin w/ O_RDONLY
@@ -777,6 +791,7 @@ static void test_fs_getstat()
 static int ReadSector(int fd, int transfer_type, uint32_t sector, uint32_t num_sectors, uint8_t * outBuffer)
 {
     struct mmce_read_sector_args args;
+    // __TESTING__
     // TODO: this is a nasty hack, i'll need some help with this
     args.fd = fd-1;
     args.type = transfer_type;
@@ -800,17 +815,26 @@ static int ValidateSector(u8 *buffer, u32 expected_sector)
         return -1;
     }
 
-    xprintf("Sector %d valid\n", expected_sector);
+    //xprintf("Sector %d index valid\n", expected_sector);
 
     u32 read_crc = *(uint32_t*)&buffer[2048-4];
+    u32 calc_crc = crc_calc(buffer, 2048-4);
     
-    xprintf("Expected CRC32 %x \n", read_crc);
+    if ( read_crc != calc_crc ){
+        xprintf("Invalid CRC32 on sector %d\n", expected_sector);
+        xprintf("Expected CRC32 %x \n", read_crc);
+        xprintf("Calced CRC32 %x \n", calc_crc);
+        return -1;
+    }
 
     return res;
 }
 
 static void test_fs_sectors()
 {
+
+    // should probs cache/precalc
+    crc_init_table();
 
     int iop_fd;
 
@@ -837,7 +861,12 @@ static void test_fs_sectors()
     // e.g. a block of 16 sectors
     int sectors_per_block = 16;
     // how many of these huge blocks to read
-    int num_blocks = 10;
+        
+    int file_size = 1024 * 1024 * 1024;
+    int file_num_sectors = file_size / 2048;
+    int max_block = file_num_sectors - sectors_per_block;
+
+    int num_blocks = max_block / 4;
 
     u32 bufferSize = sectors_per_block * 2048;
     u8 *buffer = malloc(bufferSize);
@@ -849,13 +878,13 @@ static void test_fs_sectors()
         return;
     }
 
-    // __TESTING__
-    num_blocks = 1;
+    u32 total_sectors_read = 0;
+
     for (u32 block = 0; block < num_blocks; block++)
     {
 
         u32 block_start = block + 7;
-        xprintf("Block %d of %d: read %d sectors 0x%x-0x%x\n", block, num_blocks, sectors_per_block, block_start, block_start + sectors_per_block);
+        //xprintf("Block %d of %d: read %d sectors 0x%x-0x%x\n", block, num_blocks, sectors_per_block, block_start, block_start + sectors_per_block);
 
         for (u32 v = 0; v < sectors_per_block; v++)
         {
@@ -867,12 +896,14 @@ static void test_fs_sectors()
             int num_read = ReadSector(fd, 0, sector, num_to_read, buffer);
 
             if (num_read != num_to_read)
-            {
+            {   
+                xprintf("ERRROR on sector %d (read %d so far)\n", sector, total_sectors_read);
                 xprintf("Expected %d sectors, got %d\n", num_to_read, sector, num_read);
                 free(buffer);
                 close(fd);
                 return;
             }
+            total_sectors_read += num_read;
 
             int isValid = ValidateSector(buffer, sector);
             if (isValid != 0)
@@ -1009,6 +1040,13 @@ menu_item_t mmce_fs_menu_items[] = {
         .text = "Get stat 256.bin",
         .func = &test_fs_getstat,
         .arg = NULL
+    },
+    {
+        .text = "Test reads from test.iso",
+        .func = &test_fs_sectors,
+        .func_inc = &lfsr_size_inc,
+        .func_dec = &lfsr_size_dec,
+        .arg = &lfsr_start_value
     },
 };
 
