@@ -787,43 +787,50 @@ static void test_fs_getstat()
     }
 }
 
-static int read_sector(int fd, int transfer_type, uint32_t sector, uint32_t num_sectors, uint8_t * outBuffer)
+static int read_sector(int fd, int transfer_type, uint32_t sector, uint32_t num_sectors, uint8_t *outBuffer)
 {
     struct mmce_read_sector_args args;
     // __TESTING__
     // TODO: this is a nasty hack, i'll need some help with this
     // A: for the file descriptor
     // B: to read more than one sector at a time fia fileXioDevctl
-    args.fd = fd-1;
+    args.fd = fd - 1;
     args.type = transfer_type;
     args.start_sector = sector;
     args.num_sectors = num_sectors;
-    
-    return fileXioDevctl(path, MMCE_CMD_FS_READ_SECTOR, &args, sizeof(args),  outBuffer, num_sectors * 2048);
+
+    return fileXioDevctl(path, MMCE_CMD_FS_READ_SECTOR, &args, sizeof(args), outBuffer, num_sectors * SECTOR_SIZE);
 }
 
 // Checks that the first 4 bytes match the sector number
 // and that bytes 0->2044 match the CRC32 in the last 4 bytes
-static int validate_sector(u8 *buffer, u32 expected_sector)
+static int validate_sector(u8 *buffer, u32 expected_sector, bool is_re_read)
 {
     int res = 0;
 
     // the first four bytes should be the actual sector number
-    u32 read_sector = *(uint32_t*)&buffer[0];
+    u32 read_sector = *(uint32_t *)&buffer[0];
 
-    if (expected_sector != read_sector) {
+    if (expected_sector != read_sector)
+    {
         xprintf("Invalid sector header bytes (sector number)\n");
         xprintf("Expected 0x%x (%d)\n", expected_sector, expected_sector);
         xprintf("Got 0x%x (%d)\n", read_sector, read_sector);
         return -1;
     }
 
-    //xprintf("Sector %d index valid\n", expected_sector);
+    // xprintf("Sector %d index valid\n", expected_sector);
 
-    u32 read_crc = *(uint32_t*)&buffer[2048-4];
-    u32 calc_crc = crc_calc(buffer, 2048-4);
-    
-    if ( read_crc != calc_crc ){
+    u32 read_crc = *(uint32_t *)&buffer[SECTOR_SIZE - 4];
+    u32 calc_crc = crc_calc(buffer, SECTOR_SIZE - 4);
+
+    if ( is_re_read ){
+        xprintf("Re-read CRC32 %x \n", read_crc);
+        xprintf("Re-calced CRC32 %x \n", calc_crc);
+    }
+
+    if (read_crc != calc_crc)
+    {
         xprintf("Invalid CRC32 on sector %d\n", expected_sector);
         xprintf("Expected CRC32 %x \n", read_crc);
         xprintf("Calced CRC32 %x \n", calc_crc);
@@ -833,10 +840,11 @@ static int validate_sector(u8 *buffer, u32 expected_sector)
     return res;
 }
 
+// LFSR seed 0 = sequential tests
+// LFSR seed > 0 = random seek after every 16 or so sectors
 static void test_fs_sectors()
 {
 
-    // should probs cache/precalc
     crc_init_table();
 
     int iop_fd;
@@ -865,16 +873,15 @@ static void test_fs_sectors()
     int sectors_per_block = 16;
 
     // how many of these big blocks should we read?
-    int file_size = 1024 * 1024 * 1024;
-    int file_num_sectors = file_size / 2048;
-    int max_block = file_num_sectors - sectors_per_block;
+    int max_block = TEST_ISO_NUM_SECTORS - sectors_per_block;
 
-    int num_blocks = max_block / 4;
+    // the whole file
+    int num_blocks = max_block;
 
-    u32 bufferSize = sectors_per_block * 2048;
+    u32 bufferSize = SECTOR_SIZE;
     // would probs be fine on the stack
     // but saves hunting for issues later
-    u8 *buffer = malloc(2048);
+    u8 *buffer = malloc(bufferSize);
 
     if (buffer == NULL)
     {
@@ -882,13 +889,24 @@ static void test_fs_sectors()
         goto cleanup;
     }
 
+    xprintf("Running...\n");
+
     u32 total_sectors_read = 0;
+
+    lfsr_reset();
 
     for (u32 block = 0; block < num_blocks; block++)
     {
 
-        u32 block_start = block + 7;
-        //xprintf("Block %d of %d: read %d sectors 0x%x-0x%x\n", block, num_blocks, sectors_per_block, block_start, block_start + sectors_per_block);
+        // seed 0 = linear seek
+        // seed >0 = random seek
+        u32 block_start;
+        if ( lfsr_seed == 0 ){
+            block_start = block * sectors_per_block;
+        } else {
+            block_start = lfsr_random(block) % max_block;
+        }
+        // xprintf("Block %d of %d: read %d sectors 0x%x-0x%x\n", block, num_blocks, sectors_per_block, block_start, block_start + sectors_per_block);
 
         for (u32 v = 0; v < sectors_per_block; v++)
         {
@@ -899,18 +917,18 @@ static void test_fs_sectors()
             int num_read = read_sector(fd, 0, sector, num_to_read, buffer);
 
             if (num_read != num_to_read)
-            {   
+            {
                 xprintf("ERRROR on sector %d (read %d so far)\n", sector, total_sectors_read);
                 xprintf("Expected %d sectors, got %d\n", num_to_read, sector, num_read);
                 goto cleanup;
             }
             total_sectors_read += num_read;
 
-            int isValid = validate_sector(buffer, sector);
+            int isValid = validate_sector(buffer, sector, false);
             if (isValid != 0)
             {
 
-                xprintf("Re-reading the same sector for comparison\n");
+                xprintf("Re-reading the same sector for comparison...\n");
                 delay(1);
                 num_read = read_sector(fd, 0, sector, num_to_read, buffer);
 
@@ -920,16 +938,15 @@ static void test_fs_sectors()
                     goto cleanup;
                 }
 
-                validate_sector(buffer, sector);
+                validate_sector(buffer, sector, true);
 
-                xprintf("Sector %d at address 0x%x failed, exiting\n", sector, sector * 2048);
+                xprintf("Sector %d at address 0x%x failed, exiting\n", sector, sector * SECTOR_SIZE);
                 goto cleanup;
             }
         }
-        
     }
 
-    cleanup:
+cleanup:
     free(buffer);
     close(fd);
 }
@@ -1059,7 +1076,7 @@ menu_item_t mmce_fs_menu_items[] = {
         .func = &test_fs_sectors,
         .func_inc = &lfsr_size_inc,
         .func_dec = &lfsr_size_dec,
-        .arg = &lfsr_start_value
+        .arg = &lfsr_seed
     },
 };
 
