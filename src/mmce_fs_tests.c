@@ -787,12 +787,13 @@ static void test_fs_getstat()
     }
 }
 
-
-static int ReadSector(int fd, int transfer_type, uint32_t sector, uint32_t num_sectors, uint8_t * outBuffer)
+static int read_sector(int fd, int transfer_type, uint32_t sector, uint32_t num_sectors, uint8_t * outBuffer)
 {
     struct mmce_read_sector_args args;
     // __TESTING__
     // TODO: this is a nasty hack, i'll need some help with this
+    // A: for the file descriptor
+    // B: to read more than one sector at a time fia fileXioDevctl
     args.fd = fd-1;
     args.type = transfer_type;
     args.start_sector = sector;
@@ -801,7 +802,9 @@ static int ReadSector(int fd, int transfer_type, uint32_t sector, uint32_t num_s
     return fileXioDevctl(path, MMCE_CMD_FS_READ_SECTOR, &args, sizeof(args),  outBuffer, num_sectors * 2048);
 }
 
-static int ValidateSector(u8 *buffer, u32 expected_sector)
+// Checks that the first 4 bytes match the sector number
+// and that bytes 0->2044 match the CRC32 in the last 4 bytes
+static int validate_sector(u8 *buffer, u32 expected_sector)
 {
     int res = 0;
 
@@ -893,7 +896,7 @@ static void test_fs_sectors()
             u32 sector = block_start + v;
 
             int num_to_read = 1;
-            int num_read = ReadSector(fd, 0, sector, num_to_read, buffer);
+            int num_read = read_sector(fd, 0, sector, num_to_read, buffer);
 
             if (num_read != num_to_read)
             {   
@@ -903,13 +906,13 @@ static void test_fs_sectors()
             }
             total_sectors_read += num_read;
 
-            int isValid = ValidateSector(buffer, sector);
+            int isValid = validate_sector(buffer, sector);
             if (isValid != 0)
             {
 
                 xprintf("Re-reading the same sector for comparison\n");
                 delay(1);
-                num_read = ReadSector(fd, 0, sector, num_to_read, buffer);
+                num_read = read_sector(fd, 0, sector, num_to_read, buffer);
 
                 if (num_read != num_to_read)
                 {
@@ -917,7 +920,7 @@ static void test_fs_sectors()
                     goto cleanup;
                 }
 
-                ValidateSector(buffer, sector);
+                validate_sector(buffer, sector);
 
                 xprintf("Sector %d at address 0x%x failed, exiting\n", sector, sector * 2048);
                 goto cleanup;
