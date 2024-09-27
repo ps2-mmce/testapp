@@ -860,8 +860,8 @@ static void test_fs_sectors()
 
     // e.g. a block of 16 sectors
     int sectors_per_block = 16;
-    // how many of these huge blocks to read
-        
+
+    // how many of these big blocks should we read?
     int file_size = 1024 * 1024 * 1024;
     int file_num_sectors = file_size / 2048;
     int max_block = file_num_sectors - sectors_per_block;
@@ -869,13 +869,14 @@ static void test_fs_sectors()
     int num_blocks = max_block / 4;
 
     u32 bufferSize = sectors_per_block * 2048;
-    u8 *buffer = malloc(bufferSize);
+    // would probs be fine on the stack
+    // but saves hunting for issues later
+    u8 *buffer = malloc(2048);
 
     if (buffer == NULL)
     {
         xprintf("Failed malloc 0x%x bytes\n", bufferSize);
-        close(fd);
-        return;
+        goto cleanup;
     }
 
     u32 total_sectors_read = 0;
@@ -891,7 +892,6 @@ static void test_fs_sectors()
 
             u32 sector = block_start + v;
 
-            // __TESTING__
             int num_to_read = 1;
             int num_read = ReadSector(fd, 0, sector, num_to_read, buffer);
 
@@ -899,24 +899,34 @@ static void test_fs_sectors()
             {   
                 xprintf("ERRROR on sector %d (read %d so far)\n", sector, total_sectors_read);
                 xprintf("Expected %d sectors, got %d\n", num_to_read, sector, num_read);
-                free(buffer);
-                close(fd);
-                return;
+                goto cleanup;
             }
             total_sectors_read += num_read;
 
             int isValid = ValidateSector(buffer, sector);
             if (isValid != 0)
             {
-                xprintf("Sector %d invalid\n", sector);
-                free(buffer);
-                close(fd);
-                return;
+
+                xprintf("Re-reading the same sector for comparison\n");
+                delay(1);
+                num_read = ReadSector(fd, 0, sector, num_to_read, buffer);
+
+                if (num_read != num_to_read)
+                {
+                    xprintf("Failed to re-read\n");
+                    goto cleanup;
+                }
+
+                ValidateSector(buffer, sector);
+
+                xprintf("Sector %d at address 0x%x failed, exiting\n", sector, sector * 2048);
+                goto cleanup;
             }
         }
         
     }
 
+    cleanup:
     free(buffer);
     close(fd);
 }
