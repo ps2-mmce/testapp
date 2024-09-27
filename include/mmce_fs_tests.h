@@ -32,8 +32,7 @@ struct mmce_read_sector_args {
     u8 reserved_3;
     int type;
     u32 start_sector;
-    u32 num_sectors;
-    void *buffer;
+    u32 num_sectors;    
 };
 
 void mmce_fs_auto_tests();
