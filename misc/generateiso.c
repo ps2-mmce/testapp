@@ -101,7 +101,7 @@ int GenerateISO()
     printf("Generating ISO...\n");
 
     FILE *fp;
-    uint8_t sector[SECTOR_SIZE];
+    uint8_t sectorData[SECTOR_SIZE];
     uint32_t sectorNumber = 0;
     uint32_t crc = 0;
     uint32_t sectorNum = 0;
@@ -119,22 +119,29 @@ int GenerateISO()
     for (sectorNum = 0; sectorNum < NUM_SECTORS; sectorNum++)
     {
 
-        memset(sector, 0, SECTOR_SIZE);
+        memset(sectorData, 0, SECTOR_SIZE);
 
         // sector num
-        WriteLittleEndian(sector, sectorNum);
+        WriteLittleEndian(sectorData, sectorNum);
 
         // rando noise
-        for (j = 4; j < SECTOR_SIZE - 4; j++)
+        for (j = 4; j < SECTOR_SIZE; j += 4)
         {
-            sector[j] = Random(j);
+            // checksum every 256 bytes
+            if (j % 256 == 252)
+            {
+                crc = CalcCRC(sectorData, j);
+                WriteLittleEndian(sectorData + j, crc);
+            }
+            else
+            {
+                WriteLittleEndian(sectorData + j, Random(lfsr));
+            }
         }
 
         // crc of the noise
-        crc = CalcCRC(sector, SECTOR_SIZE - 4);
-        WriteLittleEndian(sector + SECTOR_SIZE - 4, crc);
 
-        fwrite(sector, 1, SECTOR_SIZE, fp);
+        fwrite(sectorData, 1, SECTOR_SIZE, fp);
     }
 
     fclose(fp);
@@ -147,7 +154,7 @@ int ValidateISO()
     printf("Validating ISO...\n");
 
     FILE *fp;
-    uint8_t sector[SECTOR_SIZE];
+    uint8_t sector_data[SECTOR_SIZE];
     uint32_t crc = 0;
     uint32_t sectorNum = 0;
     uint32_t j = 0;
@@ -161,12 +168,14 @@ int ValidateISO()
         return 1;
     }
 
-    // lol, again, not very efficient. but that's thug life.
+    // for each sector, there's a checksum at the end
+    // but there's also a checksum before each 256 byte boundary
+    // let's check them all.
     for (sectorNum = 0; sectorNum < FILE_SIZE / SECTOR_SIZE; sectorNum++)
     {
-        fread(sector, 1, SECTOR_SIZE, fp);
+        fread(sector_data, 1, SECTOR_SIZE, fp);
 
-        int sectorNumRead = ReadLittleEndian(sector);
+        int sectorNumRead = ReadLittleEndian(sector_data);
         if (sectorNumRead != sectorNum)
         {
             printf("Error: sector number mismatch on sector %d\n", sectorNum);
@@ -176,17 +185,25 @@ int ValidateISO()
             return 1;
         }
 
-        crcCalc = CalcCRC(sector, SECTOR_SIZE - 4);
-        crcRead = ReadLittleEndian(sector + SECTOR_SIZE - 4);
-
-        if (crcCalc != crcRead)
+        // for each packet (8x256 packets in a sector)
+        for (j = 0; j < 8; j++)
         {
-            printf("Error: CRC mismatch on sector %d at address 0x%x (%d)\n", sectorNum, sectorNum * SECTOR_SIZE, sectorNum * SECTOR_SIZE);
-            printf("Expected: %08X\n", crcCalc);
-            printf("Got: %08X\n", crcRead);
-            fclose(fp);
-            return 1;
+
+            // the crc will be the checksum up to the current point in the data
+            crcCalc = CalcCRC(sector_data, (j * 256) + 252);
+            crcRead = ReadLittleEndian(sector_data + (j * 256) + 252);
+
+            if (crcCalc != crcRead)
+            {
+                printf("Error: CRC mismatch on sector %d/%d at address 0x%x (%d)\n", sectorNum, j, sectorNum * SECTOR_SIZE, sectorNum * SECTOR_SIZE);
+                printf("Expected: %08X\n", crcCalc);
+                printf("Got: %08X\n", crcRead);
+                fclose(fp);
+                return 1;
+            }
         }
+        // crcCalc = CalcCRC(sector, SECTOR_SIZE - 4);
+        // crcRead = ReadLittleEndian(sector + SECTOR_SIZE - 4);
     }
 
     fclose(fp);

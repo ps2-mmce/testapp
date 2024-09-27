@@ -804,7 +804,7 @@ static int read_sector(int fd, int transfer_type, uint32_t sector, uint32_t num_
 
 // Checks that the first 4 bytes match the sector number
 // and that bytes 0->2044 match the CRC32 in the last 4 bytes
-static int validate_sector(u8 *buffer, u32 expected_sector, bool is_re_read)
+static int validate_sector(u8 *buffer, u32 expected_sector)
 {
     int res = 0;
 
@@ -824,16 +824,27 @@ static int validate_sector(u8 *buffer, u32 expected_sector, bool is_re_read)
     u32 read_crc = *(uint32_t *)&buffer[SECTOR_SIZE - 4];
     u32 calc_crc = crc_calc(buffer, SECTOR_SIZE - 4);
 
-    if ( is_re_read ){
-        xprintf("Re-read CRC32 %x \n", read_crc);
-        xprintf("Re-calced CRC32 %x \n", calc_crc);
-    }
-
     if (read_crc != calc_crc)
     {
         xprintf("Invalid CRC32 on sector %d\n", expected_sector);
         xprintf("Expected CRC32 %x \n", read_crc);
         xprintf("Calced CRC32 %x \n", calc_crc);
+
+        // compare the individual 256 byte packets
+        // they also have a checksum at the end
+        /// (covering the start of the sector to the current point)
+        for (int packet_num = 0; packet_num < 8; packet_num++)
+        {
+            read_crc = *(uint32_t *)&buffer[packet_num * 256 + 252];
+            calc_crc = crc_calc(&buffer[0], (packet_num * 256) + 252);
+            if ( read_crc != calc_crc ){
+                xprintf("Packet %d CRC32 failed\n", packet_num);
+                xprintf("  Expected CRC32 %x \n", read_crc);
+                xprintf("  Calced CRC32 %x \n", calc_crc);
+                xprintf("  Address 0x%x\n", (expected_sector * SECTOR_SIZE) + (packet_num * 256));
+            }
+        }
+
         return -1;
     }
 
@@ -901,9 +912,12 @@ static void test_fs_sectors()
         // seed 0 = linear seek
         // seed >0 = random seek
         u32 block_start;
-        if ( lfsr_seed == 0 ){
+        if (lfsr_seed == 0)
+        {
             block_start = block * sectors_per_block;
-        } else {
+        }
+        else
+        {
             block_start = lfsr_random(block) % max_block;
         }
         // xprintf("Block %d of %d: read %d sectors 0x%x-0x%x\n", block, num_blocks, sectors_per_block, block_start, block_start + sectors_per_block);
@@ -924,22 +938,9 @@ static void test_fs_sectors()
             }
             total_sectors_read += num_read;
 
-            int isValid = validate_sector(buffer, sector, false);
+            int isValid = validate_sector(buffer, sector);
             if (isValid != 0)
             {
-
-                xprintf("Re-reading the same sector for comparison...\n");
-                delay(1);
-                num_read = read_sector(fd, 0, sector, num_to_read, buffer);
-
-                if (num_read != num_to_read)
-                {
-                    xprintf("Failed to re-read\n");
-                    goto cleanup;
-                }
-
-                validate_sector(buffer, sector, true);
-
                 xprintf("Sector %d at address 0x%x failed, exiting\n", sector, sector * SECTOR_SIZE);
                 goto cleanup;
             }
