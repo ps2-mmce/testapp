@@ -773,6 +773,42 @@ static void test_fs_getstat()
     }
 }
 
+
+static int ReadSector(int fd, int transfer_type, uint32_t sector, uint32_t num_sectors, uint8_t * outBuffer)
+{
+    struct mmce_read_sector_args args;
+    // TODO: this is a nasty hack, i'll need some help with this
+    args.fd = fd-1;
+    args.type = transfer_type;
+    args.start_sector = sector;
+    args.num_sectors = num_sectors;
+    
+    return fileXioDevctl(path, MMCE_CMD_FS_READ_SECTOR, &args, sizeof(args),  outBuffer, num_sectors * 2048);
+}
+
+static int ValidateSector(u8 *buffer, u32 expected_sector)
+{
+    int res = 0;
+
+    // the first four bytes should be the actual sector number
+    u32 read_sector = *(uint32_t*)&buffer[0];
+
+    if (expected_sector != read_sector) {
+        xprintf("Invalid sector header bytes (sector number)\n");
+        xprintf("Expected 0x%x (%d)\n", expected_sector, expected_sector);
+        xprintf("Got 0x%x (%d)\n", read_sector, read_sector);
+        return -1;
+    }
+
+    xprintf("Sector %d valid\n", expected_sector);
+
+    u32 read_crc = *(uint32_t*)&buffer[2048-4];
+    
+    xprintf("Expected CRC32 %x \n", read_crc);
+
+    return res;
+}
+
 static void test_fs_sectors()
 {
 
@@ -780,44 +816,78 @@ static void test_fs_sectors()
 
     xprintf("Starting sector read from test.iso\n");
     delay(1);
-    
+
     sprintf(path, "%s/test.iso", prefix[prefix_idx]);
 
     int fd = open(path, O_RDONLY);
-    
-    if (fd != -1) {
+
+    if (fd != -1)
+    {
         iop_fd = ps2sdk_get_iop_fd(fd);
         xprintf("[PASS] fd: %i\n", iop_fd);
-    } else {
+    }
+    else
+    {
         xprintf("[FAIL] error: %i\n", fd);
         return;
     }
 
     xprintf("Opened %s with fd\n", path, fd);
 
-    uint8_t *buffer = malloc(2048);
+    // e.g. a block of 16 sectors
+    int sectors_per_block = 16;
+    // how many of these huge blocks to read
+    int num_blocks = 10;
 
-    if (buffer == NULL) {
-        xprintf("Failed malloc 0x%x bytes\n", 2048);
-        free(buffer);
+    u32 bufferSize = sectors_per_block * 2048;
+    u8 *buffer = malloc(bufferSize);
+
+    if (buffer == NULL)
+    {
+        xprintf("Failed malloc 0x%x bytes\n", bufferSize);
         close(fd);
         return;
     }
 
-    struct mmce_read_sector_args args;
-    // TODO: this is a nasty hack, i'll need some help with this
-    args.fd = fd-1;
-    args.type = 0;
-    args.start_sector = 12;
-    args.num_sectors = 1;
-    args.buffer = buffer;
+    // __TESTING__
+    num_blocks = 1;
+    for (u32 block = 0; block < num_blocks; block++)
+    {
 
-    int res = fileXioDevctl(path, MMCE_CMD_FS_READ_SECTOR, &args, sizeof(args), buffer, 2048);
-    xprintf("res: %i\n", res);
-    
+        u32 block_start = block + 7;
+        xprintf("Block %d of %d: read %d sectors 0x%x-0x%x\n", block, num_blocks, sectors_per_block, block_start, block_start + sectors_per_block);
+
+        for (u32 v = 0; v < sectors_per_block; v++)
+        {
+
+            u32 sector = block_start + v;
+
+            // __TESTING__
+            int num_to_read = 1;
+            int num_read = ReadSector(fd, 0, sector, num_to_read, buffer);
+
+            if (num_read != num_to_read)
+            {
+                xprintf("Expected %d sectors, got %d\n", num_to_read, sector, num_read);
+                free(buffer);
+                close(fd);
+                return;
+            }
+
+            int isValid = ValidateSector(buffer, sector);
+            if (isValid != 0)
+            {
+                xprintf("Sector %d invalid\n", sector);
+                free(buffer);
+                close(fd);
+                return;
+            }
+        }
+        
+    }
+
     free(buffer);
     close(fd);
-
 }
 
 void mmce_fs_auto_tests()
