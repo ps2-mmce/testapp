@@ -773,6 +773,53 @@ static void test_fs_getstat()
     }
 }
 
+static void test_fs_sectors()
+{
+
+    int iop_fd;
+
+    xprintf("Starting sector read from test.iso\n");
+    delay(1);
+    
+    sprintf(path, "%s/test.iso", prefix[prefix_idx]);
+
+    int fd = open(path, O_RDONLY);
+    
+    if (fd != -1) {
+        iop_fd = ps2sdk_get_iop_fd(fd);
+        xprintf("[PASS] fd: %i\n", iop_fd);
+    } else {
+        xprintf("[FAIL] error: %i\n", fd);
+        return;
+    }
+
+    xprintf("Opened %s with fd\n", path, fd);
+
+    uint8_t *buffer = malloc(2048);
+
+    if (buffer == NULL) {
+        xprintf("Failed malloc 0x%x bytes\n", 2048);
+        free(buffer);
+        close(fd);
+        return;
+    }
+
+    struct mmce_read_sector_args args;
+    // TODO: this is a nasty hack, i'll need some help with this
+    args.fd = fd-1;
+    args.type = 0;
+    args.start_sector = 12;
+    args.num_sectors = 1;
+    args.buffer = buffer;
+
+    int res = fileXioDevctl(path, MMCE_CMD_FS_READ_SECTOR, &args, sizeof(args), buffer, 2048);
+    xprintf("res: %i\n", res);
+    
+    free(buffer);
+    close(fd);
+
+}
+
 void mmce_fs_auto_tests()
 {
     int read_write_size = 262144; //256KB
