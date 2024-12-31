@@ -75,7 +75,7 @@ static void wait_for_card(int timeout)
     xprintf("Polling card with ping, you can safely ignore the following failed ping msgs:\n");
   
     for (int i = 0; i < timeout; i++) {
-        res = fileXioDevctl(path, MMCEMAN_CMD_PING, NULL, 0, NULL, 0);
+        res = fileXioDevctl(path, MMCE_CMD_PING, NULL, 0, NULL, 0);
         if (res != -1)
             break;
 
@@ -88,7 +88,7 @@ static void test_cmd_ping()
     int res;
 
     xprintf("Testing: 0x01 - Ping\n");
-    res = fileXioDevctl(path, MMCEMAN_CMD_PING, NULL, 0, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_PING, NULL, 0, NULL, 0);
     if (res != -1) {
         xprintf("[PASS]\n");
 
@@ -118,7 +118,7 @@ static void test_cmd_get_card()
     int res;
 
     xprintf("Testing: 0x3 - Get Card\n");
-    res = fileXioDevctl(path, MMCEMAN_CMD_GET_CARD, NULL, 0, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_GET_CARD, NULL, 0, NULL, 0);
     if (res != -1) {
         xprintf("[PASS] current card: %i\n", res);
     } else {
@@ -145,13 +145,13 @@ static void test_cmd_set_card(uint8_t type, uint8_t mode, uint16_t num)
         xprintf("Testing: 0x4 - Set Card [PREV]\n");
     }
 
-    card = fileXioDevctl(path, MMCEMAN_CMD_GET_CARD, NULL, 0, NULL, 0);
+    card = fileXioDevctl(path, MMCE_CMD_GET_CARD, NULL, 0, NULL, 0);
     if (card == -1) {
         xprintf("[FAIL] error getting current card: %i\n", card);
         return;
     }
     
-    res = fileXioDevctl(path, MMCEMAN_CMD_SET_CARD, &param, 4, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_SET_CARD, &param, 4, NULL, 0);
     if (res == -1) {
         xprintf("[FAIL] error setting card: %i\n", res);
         return;
@@ -159,7 +159,7 @@ static void test_cmd_set_card(uint8_t type, uint8_t mode, uint16_t num)
 
     wait_for_card(15); //Wait 15 seconds for card to resp to ping
 
-    res = fileXioDevctl(path, MMCEMAN_CMD_GET_CARD, NULL, 0, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_GET_CARD, NULL, 0, NULL, 0);
     if (card == -1) {
         xprintf("[FAIL] error getting current card: %i\n", card);
         return;
@@ -194,7 +194,7 @@ static void test_cmd_get_channel(void)
     int res;
 
     xprintf("Testing: 0x5 - Get Channel\n");
-    res = fileXioDevctl(path, MMCEMAN_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
     if (res != -1) {
         xprintf("[PASS] current channel: %i\n", res);
     } else {
@@ -220,13 +220,13 @@ static void test_cmd_set_channel(uint8_t mode, uint16_t num)
         xprintf("Testing: 0x6 - Set Channel [PREV]\n");
     }
 
-    chan = fileXioDevctl(path, MMCEMAN_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
+    chan = fileXioDevctl(path, MMCE_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
     if (chan == -1) {
         xprintf("[FAIL] error getting current channel: %i\n", chan);
         return;
     }
     
-    res = fileXioDevctl(path, MMCEMAN_CMD_SET_CHANNEL, &param, 4, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_SET_CHANNEL, &param, 4, NULL, 0);
     if (res == -1) {
         xprintf("[FAIL] error setting channel: %i\n", res);
         return;
@@ -234,7 +234,7 @@ static void test_cmd_set_channel(uint8_t mode, uint16_t num)
 
     wait_for_card(15); //Wait 15 seconds for chan to resp to ping
 
-    res = fileXioDevctl(path, MMCEMAN_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
+    res = fileXioDevctl(path, MMCE_CMD_GET_CHANNEL, NULL, 0, NULL, 0);
     if (chan == -1) {
         xprintf("[FAIL] error getting current channel: %i\n", chan);
         return;
@@ -270,7 +270,7 @@ static void test_cmd_get_gameid()
     char gameid[MAX_GAMEID_LEN];
 
     xprintf("Testing: 0x7 - Get GameID\n");
-    fileXioDevctl(path, MMCEMAN_CMD_GET_GAMEID, NULL, 0, &gameid, MAX_GAMEID_LEN);
+    fileXioDevctl(path, MMCE_CMD_GET_GAMEID, NULL, 0, &gameid, MAX_GAMEID_LEN);
 
     if (res != -1) {
         xprintf("[PASS] GameID: %s\n", gameid);
@@ -292,13 +292,13 @@ static void test_cmd_set_gameid(char *gameid)
 
     xprintf("Testing: 0x8 - Set GameID (%s)\n", gameid);
 
-    fileXioDevctl(path, MMCEMAN_CMD_GET_GAMEID, NULL, 0, &old_gameid, MAX_GAMEID_LEN);
+    fileXioDevctl(path, MMCE_CMD_GET_GAMEID, NULL, 0, &old_gameid, MAX_GAMEID_LEN);
     if (res == -1) {
         xprintf("[FAIL] error getting GameID: %i\n", res);
         return;
     }
 
-    fileXioDevctl(path, MMCEMAN_CMD_SET_GAMEID, gameid, MAX_GAMEID_LEN, NULL, 0);
+    fileXioDevctl(path, MMCE_CMD_SET_GAMEID, gameid, MAX_GAMEID_LEN, NULL, 0);
     if (res == -1) {
         xprintf("[FAIL] error setting GameID: %i\n", res);
         return;
@@ -306,7 +306,7 @@ static void test_cmd_set_gameid(char *gameid)
 
     wait_for_card(15); //Wait 15 seconds for card to resp to ping
 
-    fileXioDevctl(path, MMCEMAN_CMD_GET_GAMEID, NULL, 0, &new_gameid, MAX_GAMEID_LEN);
+    fileXioDevctl(path, MMCE_CMD_GET_GAMEID, NULL, 0, &new_gameid, MAX_GAMEID_LEN);
     if (res == -1) {
         xprintf("[FAIL] error getting GameID: %i\n", res);
         return;
