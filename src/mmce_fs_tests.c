@@ -17,14 +17,19 @@
 
 #include "include/pad.h"
 #include "include/common.h"
+#include "include/mmce_cmd_tests.h"
 #include "include/mmce_fs_tests.h"
 #include "include/mmce_utils.h"
+
 
 static int read_size = 256;
 static int write_size = 256;
 
 static const char *prefix[] = {"mmce0:", "mmce1:"};
 static int prefix_idx = 0;
+
+static int ack_wait_cycles = 5;
+static int use_alarms = 1;
 
 static char path[64] = "mmce0:";
 
@@ -77,6 +82,7 @@ static int test_fs_verify_data(uint8_t *buffer, uint32_t size, uint32_t offset)
     return res;
 }
 
+//TODO: consolidate
 static void prefix_inc(void *arg)
 {
     int num = *(int*)arg;
@@ -91,6 +97,50 @@ static void prefix_dec(void *arg)
     if (num > 0)
         num--;
     *(int*)arg = num;
+}
+
+static void cycles_inc(void *arg)
+{
+    int num = *(int*)arg;
+    if (num < 5)
+        num++;
+    *(int*)arg = num;
+
+    sprintf(path, "%s/", prefix[prefix_idx]);
+    fileXioDevctl(path, MMCE_SETTINGS_ACK_WAIT_CYCLES, &num, 4, NULL, 0);
+}
+
+static void cycles_dec(void *arg)
+{
+    int num = *(int*)arg;
+    if (num > 0)
+        num--;
+    *(int*)arg = num;
+
+    sprintf(path, "%s/", prefix[prefix_idx]);
+    fileXioDevctl(path, MMCE_SETTINGS_ACK_WAIT_CYCLES, &num, 4, NULL, 0);
+}
+
+static void alarms_inc(void *arg)
+{
+    int num = *(int*)arg;
+    if (num < 1)
+        num++;
+    *(int*)arg = num;
+
+    sprintf(path, "%s/", prefix[prefix_idx]);
+    fileXioDevctl(path, MMCE_SETTINGS_SET_ALARMS, &num, 4, NULL, 0);
+}
+
+static void alarms_dec(void *arg)
+{
+    int num = *(int*)arg;
+    if (num > 0)
+        num--;
+    *(int*)arg = num;
+
+    sprintf(path, "%s/", prefix[prefix_idx]);
+    fileXioDevctl(path, MMCE_SETTINGS_SET_ALARMS, &num, 4, NULL, 0);
 }
 
 static void pow_two_size_inc(void *arg)
@@ -995,6 +1045,7 @@ void mmce_fs_auto_tests()
     xprintf("Auto test complete\n");
 }
 
+//TODO: move MMCEMAN settings to separate page?
 menu_item_t mmce_fs_menu_items[] = {
     {
         .text = "MMCE Slot:",
@@ -1002,6 +1053,20 @@ menu_item_t mmce_fs_menu_items[] = {
         .func_inc = &prefix_inc,
         .func_dec = &prefix_dec,
         .arg = &prefix_idx
+    },
+    {
+        .text = "MMCEMAN Ack Wait Cycles:",
+        .func = NULL,
+        .func_inc = &cycles_inc,
+        .func_dec = &cycles_dec,
+        .arg = &ack_wait_cycles
+    },
+    {
+        .text = "MMCEMAN Use alarms:",
+        .func = NULL,
+        .func_inc = &alarms_inc,
+        .func_dec = &alarms_dec,
+        .arg = &use_alarms
     },
     {
         .text = "Open & Close 256.bin",
